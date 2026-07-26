@@ -752,6 +752,9 @@ function getBooks(filters, adminCredential, customerToken) {
       const author     = trim_(displayRow[columns.AUTHOR]);
       const reservationId = linkColumns.reservationId === -1 ? '' : trim_(displayRow[linkColumns.reservationId]);
       const reservedCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(displayRow[linkColumns.reservedCustomerId]);
+      const reservedCustomerName = linkColumns.reservedCustomerName === -1 ? '' : trim_(displayRow[linkColumns.reservedCustomerName]);
+      const reservedAt = linkColumns.reservedAt === -1 ? '' : trim_(displayRow[linkColumns.reservedAt]);
+      const reservationUpdatedAt = linkColumns.reservationUpdatedAt === -1 ? '' : trim_(displayRow[linkColumns.reservationUpdatedAt]);
 
       let status = trim_(displayRow[columns.STATUS]);
       if (!status) status = issuedTo ? 'Issued' : 'Available';
@@ -780,9 +783,12 @@ function getBooks(filters, adminCredential, customerToken) {
         language, bookNo, bookName, author, ageGroup, category,
         status,
         imageUrl:   imageMap[bookNo] || '',
-        // Admin-only fields — empty string for non-admin
+        // Admin-only fields — empty string for non-admin (never reveal who
+        // reserved a book, or when, to other customers).
         issuedTo:   isAdmin ? issuedTo   : '',
-        reservedBy: '',
+        reservedBy: isAdmin ? reservedCustomerName : '',
+        reservedAt: isAdmin ? reservedAt : '',
+        reservationUpdatedAt: isAdmin ? reservationUpdatedAt : '',
         phone:      '',
         issueDate:  '',
         notes:      '',
@@ -1176,26 +1182,36 @@ function returnBook(bookNo, adminCredential) {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
-    const data = sheet.getDataRange().getValues();
+    const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+    const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
+    if (!bookRowNumber) return { success: false, error: 'Book not found.' };
 
-    for (let i = headerRow + 1; i < data.length; i++) {
-      if (trim_(data[i][columns.BOOK_NO]) !== bookNo.trim()) continue;
+    const row = getSheetRowValues_(sheet, bookRowNumber);
+    const issuedTo = trim_(row[columns.ISSUED_TO]);
+    const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
 
-      const r        = i + 1;
-      const issuedTo = trim_(data[i][columns.ISSUED_TO]);
+    // Clear issue AND any lingering reservation link so an available row never
+    // carries stale reservation fields.
+    row[columns.ISSUED_TO] = '';
+    row[columns.STATUS] = 'Available';
+    if (linkColumns.reservationId !== -1)        row[linkColumns.reservationId] = '';
+    if (linkColumns.reservedCustomerId !== -1)   row[linkColumns.reservedCustomerId] = '';
+    if (linkColumns.reservedCustomerName !== -1) row[linkColumns.reservedCustomerName] = '';
+    if (linkColumns.reservedAt !== -1)           row[linkColumns.reservedAt] = '';
+    if (linkColumns.reservationUpdatedAt !== -1) row[linkColumns.reservationUpdatedAt] = new Date();
+    setSheetRowValues_(sheet, bookRowNumber, row);
 
-      sheet.getRange(r, columns.ISSUED_TO   + 1).setValue('');
-      sheet.getRange(r, columns.STATUS      + 1).setValue('Available');
-
-      // Log return to customer's named tab
-      if (issuedTo) {
-        logReturnToCustTab_(issuedTo, bookNo.trim(), new Date());
-      }
-
-      invalidatePublicBooksCache_();
-      return { success: true, message: '✅ Book marked as returned and available.' };
+    if (ownerCustomerId) {
+      try { adjustCustomerActiveReservationCountById_(ownerCustomerId, -1); } catch (e) { /* non-fatal */ }
     }
-    return { success: false, error: 'Book not found.' };
+
+    // Log return to customer's named tab
+    if (issuedTo) {
+      logReturnToCustTab_(issuedTo, bookNo.trim(), new Date());
+    }
+
+    invalidatePublicBooksCache_();
+    return { success: true, message: '✅ Book marked as returned and available.' };
   } catch (err) {
     return reportError_('returnBook', err);
   }
@@ -1206,18 +1222,32 @@ function cancelReservation(bookNo, adminCredential) {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
-    const data = sheet.getDataRange().getValues();
+    const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+    const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
+    if (!bookRowNumber) return { success: false, error: 'Book not found.' };
 
-    for (let i = headerRow + 1; i < data.length; i++) {
-      if (trim_(data[i][columns.BOOK_NO]) !== bookNo.trim()) continue;
+    const row = getSheetRowValues_(sheet, bookRowNumber);
+    // Remember whose reservation this was, so we can decrement their count.
+    const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
 
-      const r = i + 1;
-      sheet.getRange(r, columns.STATUS      + 1).setValue('Available');
+    // Set Available AND clear the whole reservation link — never leave stale
+    // reservation fields on an available row (that's what caused the "reserved
+    // fields present but status Available" inconsistency).
+    row[columns.STATUS] = 'Available';
+    if (linkColumns.reservationId !== -1)        row[linkColumns.reservationId] = '';
+    if (linkColumns.reservedCustomerId !== -1)   row[linkColumns.reservedCustomerId] = '';
+    if (linkColumns.reservedCustomerName !== -1) row[linkColumns.reservedCustomerName] = '';
+    if (linkColumns.reservedAt !== -1)           row[linkColumns.reservedAt] = '';
+    if (linkColumns.reservationUpdatedAt !== -1) row[linkColumns.reservationUpdatedAt] = new Date();
+    setSheetRowValues_(sheet, bookRowNumber, row);
 
-      invalidatePublicBooksCache_();
-      return { success: true, message: '✅ Reservation cancelled.' };
+    // Keep the owner's active-reservation count honest (best-effort).
+    if (ownerCustomerId) {
+      try { adjustCustomerActiveReservationCountById_(ownerCustomerId, -1); } catch (e) { /* non-fatal */ }
     }
-    return { success: false, error: 'Book not found.' };
+
+    invalidatePublicBooksCache_();
+    return { success: true, message: '✅ Reservation cancelled.' };
   } catch (err) {
     return reportError_('cancelReservation', err);
   }
@@ -1436,37 +1466,50 @@ function generateInviteCodesForAllCustomers(adminCredential) {
 // Customer Management (Admin only)
 // ─────────────────────────────────────────────
 
+// Resolve the admin-list column indices from the Customer-Details header row.
+function getCustomerAdminColumns_(headerMap) {
+  return {
+    customerId:              getHeaderIndex_(headerMap, 'Customer ID'),
+    legacySrNo:              getHeaderIndex_(headerMap, 'Legacy Sr No'),
+    name:                    getHeaderIndex_(headerMap, 'Name'),
+    dateStart:               getHeaderIndex_(headerMap, 'Date of Start'),
+    location:                getHeaderIndex_(headerMap, 'Location'),
+    address:                 getHeaderIndex_(headerMap, 'Address'),
+    accountStatus:           getHeaderIndex_(headerMap, 'Account Status'),
+    tillDateSum:             getHeaderIndex_(headerMap, 'Till Date Sum'),
+    monthlyReservationLimit: getHeaderIndex_(headerMap, 'Monthly Reservation Limit'),
+    activeReservationCount:  getHeaderIndex_(headerMap, 'Active Reservation Count'),
+    createdAt:               getHeaderIndex_(headerMap, 'Created At')
+  };
+}
+
 function getCustomers(adminCredential) {
   try {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
-    const ss    = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(CONFIG.CUSTOMER_SHEET_NAME);
-    if (!sheet) return { success: false, error: 'Customer DB sheet not found.' };
 
-    const data = sheet.getDataRange().getValues();
-    const tz   = Session.getScriptTimeZone();
-
-    // Find header row (look for "Name" in column B — may not be at row 1)
-    let headerRow = -1;
-    for (let i = 0; i < data.length; i++) {
-      if (String(data[i][CUST.NAME] || '').toLowerCase().trim() === 'name') {
-        headerRow = i; break;
-      }
-    }
-    if (headerRow === -1) return { success: false, error: 'Could not find header row in Customer DB.' };
+    // Read from the live Customer-Details sheet (header-resolved), not the
+    // legacy fixed-column Customer DB.
+    const details = getCustomerDetailsSheetAndColumns_();
+    const data = details.sheet.getDataRange().getValues();
+    const headerMap = getHeaderMap_(data[details.headerRow]);
+    const cols = getCustomerAdminColumns_(headerMap);
+    const tz = Session.getScriptTimeZone();
 
     const customers = [];
-    for (let i = headerRow + 1; i < data.length; i++) {
-      const name = trim_(data[i][CUST.NAME]);
+    for (let i = details.headerRow + 1; i < data.length; i++) {
+      const name = trim_(getRowValue_(data[i], cols.name));
       if (!name) continue;
       customers.push({
-        srNo:        trim_(data[i][CUST.SR_NO]),
+        customerId:              trim_(getRowValue_(data[i], cols.customerId)),
+        srNo:                    trim_(getRowValue_(data[i], cols.legacySrNo)),
         name,
-        dateStart:   formatDate_(data[i][CUST.DATE_START], tz),
-        location:    trim_(data[i][CUST.LOCATION]),
-        address:     trim_(data[i][CUST.ADDRESS]),
-        status:      trim_(data[i][CUST.STATUS]) || 'Active',
-        tillDateSum: trim_(data[i][CUST.TILL_DATE_SUM])
+        dateStart:               formatDate_(getRowValue_(data[i], cols.dateStart), tz),
+        location:                trim_(getRowValue_(data[i], cols.location)),
+        address:                 trim_(getRowValue_(data[i], cols.address)),
+        status:                  trim_(getRowValue_(data[i], cols.accountStatus)) || 'Active',
+        tillDateSum:             trim_(getRowValue_(data[i], cols.tillDateSum)),
+        monthlyReservationLimit: trim_(getRowValue_(data[i], cols.monthlyReservationLimit)),
+        activeReservationCount:  trim_(getRowValue_(data[i], cols.activeReservationCount))
       });
     }
     return { success: true, customers };
@@ -1478,36 +1521,54 @@ function getCustomers(adminCredential) {
 function addCustomer(name, dateStart, location, address, adminCredential) {
   try {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
+    name = trim_(name);
     if (!name) return { success: false, error: 'Customer name is required.' };
 
-    const ss    = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(CONFIG.CUSTOMER_SHEET_NAME);
-    if (!sheet) return { success: false, error: 'Customer DB sheet not found.' };
+    // Create a complete Customer-Details row: Customer ID, defaults, and an
+    // invite code so the customer can later claim their login.
+    const details = getCustomerDetailsSheetAndColumns_();
+    const sheet = details.sheet;
+    const headerRow = details.headerRow;
+    const headerValues = sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const headerMap = getHeaderMap_(headerValues);
+    const columns = buildCustomerDetailsColumns_(headerMap);
+    const existing = readExistingCustomerDetails_(sheet, headerRow, columns);
 
+    // Next legacy Sr No (kept for continuity with the migrated data).
     const data = sheet.getDataRange().getValues();
-    let headerRow = -1;
-    let maxSrNo   = 0;
-    for (let i = 0; i < data.length; i++) {
-      if (String(data[i][CUST.NAME] || '').toLowerCase().trim() === 'name') {
-        headerRow = i; continue;
-      }
-      if (headerRow >= 0 && trim_(data[i][CUST.NAME])) {
-        const sr = parseInt(data[i][CUST.SR_NO]) || 0;
-        if (sr > maxSrNo) maxSrNo = sr;
-      }
+    let maxSrNo = 0;
+    for (let i = headerRow + 1; i < data.length; i++) {
+      const sr = parseInt(getRowValue_(data[i], columns.legacySrNo), 10) || 0;
+      if (sr > maxSrNo) maxSrNo = sr;
     }
-    if (headerRow === -1) return { success: false, error: 'Could not find header row in Customer DB.' };
 
-    sheet.appendRow([
-      maxSrNo + 1,
-      name.trim(),
-      dateStart ? new Date(dateStart) : new Date(),
-      (location || '').trim(),
-      (address  || '').trim(),
-      'Active',
-      ''
-    ]);
-    return { success: true, message: '✅ Customer "' + name.trim() + '" added successfully.' };
+    const width = sheet.getLastColumn();
+    const row = new Array(width).fill('');
+    const now = new Date();
+    const customerId = generateCustomerId_(name, existing.usedCustomerIds);
+    const inviteCode = generateInviteCode_();
+
+    setCustomerDetailValue_(row, columns.customerId, customerId);
+    setCustomerDetailValue_(row, columns.legacySrNo, maxSrNo + 1);
+    setCustomerDetailValue_(row, columns.name, name);
+    setCustomerDetailValue_(row, columns.dateStart, dateStart ? new Date(dateStart) : now);
+    setCustomerDetailValue_(row, columns.location, trim_(location));
+    setCustomerDetailValue_(row, columns.address, trim_(address));
+    setCustomerDetailValue_(row, columns.accountStatus, 'Active');
+    setCustomerDetailValue_(row, columns.activeReservationCount, 0);
+    setCustomerDetailValue_(row, columns.subscriptionStatus, 'NA');
+    setCustomerDetailValue_(row, columns.authMethod, 'invite_pending');
+    setCustomerDetailValue_(row, columns.inviteCodeHash, hashInviteCode_(customerId, inviteCode));
+    setCustomerDetailValue_(row, columns.inviteStatus, 'Pending');
+    setCustomerDetailValue_(row, columns.createdAt, now);
+
+    sheet.appendRow(row);
+    return {
+      success: true,
+      message: '✅ Customer "' + name + '" added.',
+      customerId,
+      inviteCode
+    };
   } catch (err) {
     return reportError_('addCustomer', err);
   }
@@ -1521,22 +1582,17 @@ function updateCustomerStatus(customerName, newStatus, adminCredential) {
     const valid = ['Active', 'Inactive', 'Closed'];
     if (!valid.includes(newStatus)) return { success: false, error: 'Invalid status.' };
 
-    const ss    = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-    const sheet = ss.getSheetByName(CONFIG.CUSTOMER_SHEET_NAME);
-    if (!sheet) return { success: false, error: 'Customer DB sheet not found.' };
-
-    const data = sheet.getDataRange().getValues();
-    let headerRow = -1;
-    for (let i = 0; i < data.length; i++) {
-      if (String(data[i][CUST.NAME] || '').toLowerCase().trim() === 'name') {
-        headerRow = i; break;
-      }
+    const details = getCustomerDetailsSheetAndColumns_();
+    const data = details.sheet.getDataRange().getValues();
+    const headerMap = getHeaderMap_(data[details.headerRow]);
+    const cols = getCustomerAdminColumns_(headerMap);
+    if (cols.name === -1 || cols.accountStatus === -1) {
+      return { success: false, error: 'Customer-Details is missing Name or Account Status column.' };
     }
-    if (headerRow === -1) return { success: false, error: 'Could not find header row in Customer DB.' };
 
-    for (let i = headerRow + 1; i < data.length; i++) {
-      if (trim_(data[i][CUST.NAME]).toLowerCase() === customerName.toLowerCase()) {
-        sheet.getRange(i + 1, CUST.STATUS + 1).setValue(newStatus);
+    for (let i = details.headerRow + 1; i < data.length; i++) {
+      if (trim_(data[i][cols.name]).toLowerCase() === customerName.toLowerCase()) {
+        details.sheet.getRange(i + 1, cols.accountStatus + 1).setValue(newStatus);
         return { success: true, message: '✅ Status updated to "' + newStatus + '" for ' + customerName };
       }
     }

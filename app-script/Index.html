@@ -207,8 +207,8 @@
 
   /* ── Reservation list thumbnail (limit modal) ── */
   .reservation-thumb {
-    width: 40px;
-    height: 54px;
+    width: 60px;
+    height: 80px;
     object-fit: cover;
     border-radius: 6px;
     flex-shrink: 0;
@@ -220,7 +220,7 @@
     align-items: center;
     justify-content: center;
     color: #bbb;
-    font-size: 1.1rem;
+    font-size: 1.6rem;
   }
 
   .status-pill {
@@ -801,6 +801,25 @@
   </div>
 </div>
 
+<!-- ══════════════ CONFIRM MODAL (reusable) ══════════════ -->
+<div class="modal fade" id="confirmModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="confirmTitle"><i class="bi bi-question-circle me-2"></i>Please confirm</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-0" id="confirmMessage" style="font-size:.9rem"></p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" id="confirmOkBtn">Confirm</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ TOAST ══════════════ -->
 <div class="toast-container">
   <div id="appToast" class="toast align-items-center border-0 text-white" role="alert" style="min-width:280px">
@@ -842,6 +861,7 @@ const reserveModal = new bootstrap.Modal('#reserveModal');
 const issueModal   = new bootstrap.Modal('#issueModal');
 const customerAuthModal = new bootstrap.Modal('#customerAuthModal');
 const limitModal = new bootstrap.Modal('#limitModal');
+const confirmModal = new bootstrap.Modal('#confirmModal');
 let pendingReserveBookNo = '';
 
 // ════════════════════════════════════════════════
@@ -1076,16 +1096,31 @@ function openBookDetail(bookNo) {
 
   let reservationInfo = '';
   if (book.status === 'Reserved') {
-    reservationInfo = adminMode
-      ? `<div class="alert alert-warning py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
-           <i class="bi bi-bookmark-fill me-1"></i>
-           This book is currently reserved.
-           ${book.reservationId ? '<br><small>Reservation ID: ' + escHtml(book.reservationId) + '</small>' : ''}
-         </div>`
-      : `<div class="alert alert-warning py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+    if (adminMode) {
+      // Admin sees WHO reserved it and WHEN. These fields are only populated by
+      // the server for admin sessions.
+      const rows = [];
+      if (book.reservedBy) rows.push(`<div><i class="bi bi-person-fill me-1"></i>Reserved by <b>${escHtml(book.reservedBy)}</b></div>`);
+      if (book.reservedAt) rows.push(`<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Reserved on <b>${escHtml(book.reservedAt)}</b></div>`);
+      if (book.reservationUpdatedAt && book.reservationUpdatedAt !== book.reservedAt)
+        rows.push(`<div class="mt-1"><i class="bi bi-clock-history me-1"></i>Updated <b>${escHtml(book.reservationUpdatedAt)}</b></div>`);
+      if (book.reservationId) rows.push(`<div class="mt-1"><small class="text-muted">Reservation ID: ${escHtml(book.reservationId)}</small></div>`);
+      reservationInfo = `<div class="alert alert-warning py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+           <div class="fw-bold mb-1"><i class="bi bi-bookmark-fill me-1"></i>Currently reserved</div>
+           ${rows.join('') || 'Reservation details are unavailable.'}
+         </div>`;
+    } else if (book.isMyReservation) {
+      // The logged-in customer's OWN reservation — make it explicit and positive.
+      reservationInfo = `<div class="alert alert-success py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+           <i class="bi bi-bookmark-check-fill me-1"></i>
+           <b>You've reserved this book.</b> Use “Unreserve” below to cancel it.
+         </div>`;
+    } else {
+      reservationInfo = `<div class="alert alert-warning py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
            <i class="bi bi-bookmark-fill me-1"></i>
            This book is currently reserved.
          </div>`;
+    }
   } else if (book.status === 'Issued') {
     reservationInfo = adminMode
       ? `<div class="alert alert-danger py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
@@ -1110,7 +1145,7 @@ function openBookDetail(bookNo) {
         <div class="mb-2">${pill}</div>
       </div>
     </div>
-    ${reservationInfo}
+    <div id="reservationInfoBox">${reservationInfo}</div>
     ${buildAdminSection(book)}
   `;
 
@@ -1164,6 +1199,16 @@ function applyMyReservationToModal_(book, reservations) {
   book.isMyReservation = true;
   book.reservationId = reservation.reservationId;
   activeBook = book;
+
+  // Swap the generic "currently reserved" notice for the explicit "you reserved
+  // this" message now that we know it's the customer's own reservation.
+  const infoBox = document.getElementById('reservationInfoBox');
+  if (infoBox && !adminMode) {
+    infoBox.innerHTML = `<div class="alert alert-success py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+         <i class="bi bi-bookmark-check-fill me-1"></i>
+         <b>You've reserved this book.</b> Use “Unreserve” below to cancel it.
+       </div>`;
+  }
 
   const footer = document.getElementById('modalFooter');
   if (!footer || document.getElementById('myUnreserveBtn')) return;
@@ -1317,9 +1362,9 @@ function restoreBook_(snap) {
 // OPTIMISTIC reserve: update the UI immediately, call the server in the
 // background, reconcile on success, roll back on failure. Booking safety is
 // unchanged — the server still validates + writes under the lock.
-// swapContext (optional): { cancelledTitle } when this reserve follows an
-// unreserve from the limit modal — lets the banner name both books.
-function reserveLoggedInCustomer(bookNo, swapContext) {
+// opts.keepBanner: don't show a "Reserving…" pending banner (the caller already
+// set an appropriate one — e.g. the swap's "reserving X now…" message).
+function reserveLoggedInCustomer(bookNo, opts) {
   // Client-side limit pre-check from data we already have — avoids a doomed
   // round-trip and shows the limit modal instantly when already at limit.
   // Mirrors the server's parseMonthlyReservationLimit_ (explicit limit, else the
@@ -1344,12 +1389,11 @@ function reserveLoggedInCustomer(bookNo, swapContext) {
   // Optimistically flip the card to "reserved by me", show an inline "Reserving…"
   // indicator on the card, and close the modal now. The confirmation/error toast
   // is shown when the server replies (below), not up front.
+  // Note: in a swap, the cancel is confirmed by its OWN banner (see
+  // unreserveThenRetry), so here we message only about the book being reserved —
+  // keeping each step's message short and sequential.
   const title = bookTitle_(bookNo);
-  const cancelledTitle = swapContext && swapContext.cancelledTitle;
-  showBanner(
-    cancelledTitle ? `Cancelled “${cancelledTitle}” · Reserving “${title}”…` : `Reserving “${title}”…`,
-    'pending'
-  );
+  if (!(opts && opts.keepBanner)) showBanner(`Reserving “${title}” now…`, 'pending');
   const snap = snapshotBook_(bookNo);
   myReservationsCache = null;
   const tempReservationId = 'TEMP-' + Date.now();
@@ -1376,10 +1420,7 @@ function reserveLoggedInCustomer(bookNo, swapContext) {
           reservedCustomerId: res.reservedCustomerId || (currentCustomer ? currentCustomer.customerId : ''),
           isMyReservation: true
         });
-        showBanner(
-          cancelledTitle ? `✓ Cancelled “${cancelledTitle}” · Reserved “${title}”` : `✓ Reserved “${title}”`,
-          'success'
-        );
+        showBanner(`✓ Reserved “${title}”`, 'success');
       } else if (res.code === 'LIMIT_REACHED') {
         // Rare: server disagreed (e.g. reserved elsewhere). Roll back + reconcile.
         restoreBook_(snap);
@@ -1496,8 +1537,8 @@ function unreserveThenRetry(reservationId, bookNo) {
   myReservationsCache = null;
 
   // Optimistic: mark the swapped-out book available (with inline indicator) and
-  // close the modal now. Show a persistent banner describing the whole swap.
-  showBanner(`Cancelling “${cancelledTitle}” · reserving “${pendingTitle}”…`, 'pending');
+  // close the modal now. STAGE 1: announce the cancel is happening first.
+  showBanner(`Cancelling “${cancelledTitle}” first, then reserving “${pendingTitle}”…`, 'pending');
   if (swapBookNo) { refreshBook(swapBookNo, 'Available', '', '', ''); markBookSaving_(swapBookNo, 'Cancelling'); }
   limitModal.hide();
 
@@ -1508,10 +1549,11 @@ function unreserveThenRetry(reservationId, bookNo) {
       clearBookSaving_(swapBookNo);
       if (res.success) {
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
-        // Now that the unreserve is committed, run the (optimistic) reserve; pass
-        // the cancelled title so its success banner names both books. The flag
-        // stays set and is cleared when that reserve resolves.
-        reserveLoggedInCustomer(pending, { cancelledTitle });
+        // STAGE 2: cancel is committed — confirm it and announce the reserve is
+        // starting. keepBanner so this message stands until the reserve resolves
+        // (then reserveLoggedInCustomer shows "✓ Reserved …").
+        showBanner(`✓ Cancelled “${cancelledTitle}” · reserving “${pendingTitle}” now…`, 'pending');
+        reserveLoggedInCustomer(pending, { keepBanner: true });
       } else {
         endReservationAction_();
         restoreBook_(snap);
@@ -1615,11 +1657,25 @@ function submitIssue() {
 function doAdminAction(action, bookNo) {
   bookNo = bookNo || (activeBook && activeBook.bookNo);
   if (!bookNo) return;
-  const labels = { cancelReservation: 'Cancel reservation', returnBook: 'Mark as returned' };
-  if (!confirm(labels[action] + '?')) return;
+  const cfg = {
+    cancelReservation: { prompt: 'Cancel this reservation?', title: 'Cancel reservation', confirmLabel: 'Cancel reservation' },
+    returnBook:        { prompt: 'Mark this book as returned?', title: 'Mark as returned', confirmLabel: 'Mark as returned' }
+  }[action];
+  if (!cfg) return;
 
+  // Close the book detail modal first so only the confirm dialog is on screen
+  // (avoids stacked-modal backdrop issues).
   bookModal.hide();
+  setTimeout(() => {
+    confirmAction(cfg.prompt, () => runAdminAction_(action, bookNo), {
+      title: cfg.title,
+      confirmLabel: cfg.confirmLabel,
+      confirmClass: 'btn-danger'
+    });
+  }, 250);
+}
 
+function runAdminAction_(action, bookNo) {
   google.script.run
     .withSuccessHandler(res => {
       if (res.success) {
@@ -1978,6 +2034,30 @@ function hideBanner() {
   document.getElementById('actionBanner').classList.remove('show');
 }
 
+// Reusable confirm dialog (replaces the native confirm()). Calls onConfirm only
+// when the user clicks the confirm button.
+//   opts: { title, confirmLabel, confirmClass }  (all optional)
+function confirmAction(message, onConfirm, opts) {
+  opts = opts || {};
+  document.getElementById('confirmTitle').innerHTML =
+    '<i class="bi bi-question-circle me-2"></i>' + escHtml(opts.title || 'Please confirm');
+  document.getElementById('confirmMessage').textContent = message;
+
+  const okBtn = document.getElementById('confirmOkBtn');
+  okBtn.className = 'btn ' + (opts.confirmClass || 'btn-danger');
+  okBtn.textContent = opts.confirmLabel || 'Confirm';
+
+  // Replace the button to clear any prior click handler, then wire this one.
+  const freshBtn = okBtn.cloneNode(true);
+  okBtn.parentNode.replaceChild(freshBtn, okBtn);
+  freshBtn.addEventListener('click', () => {
+    confirmModal.hide();
+    if (typeof onConfirm === 'function') onConfirm();
+  });
+
+  confirmModal.show();
+}
+
 // Returns true if it's OK to start a reservation action. If one is already in
 // flight, it shows a "please wait" banner and returns false so the caller bails.
 function beginReservationAction_() {
@@ -2171,6 +2251,11 @@ function submitAddCustomer() {
     .withSuccessHandler(res => {
       if (res.success) {
         showToast(res.message, 'success');
+        // Surface the new customer's login credentials persistently so the admin
+        // can share them (a toast is too fleeting for an ID + invite code).
+        if (res.customerId && res.inviteCode) {
+          showBanner(`New customer added. Customer ID: ${res.customerId} · Invite code: ${res.inviteCode} — share these so they can set up login.`, 'success', 0);
+        }
         // Clear form and close
         ['cName','cLocation','cAddress'].forEach(id => document.getElementById(id).value = '');
         toggleAddForm();
