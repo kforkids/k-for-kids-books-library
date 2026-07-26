@@ -1153,25 +1153,35 @@ function issueBook(bookNo, subscriberName, issueDate, adminCredential) {
     if (!bookNo || !subscriberName)   return { success: false, error: 'Book number and subscriber name required.' };
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
-    const data = sheet.getDataRange().getValues();
+    const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+    const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
+    if (!bookRowNumber) return { success: false, error: 'Book not found.' };
 
-    for (let i = headerRow + 1; i < data.length; i++) {
-      if (trim_(data[i][columns.BOOK_NO]) !== bookNo.trim()) continue;
+    const row      = getSheetRowValues_(sheet, bookRowNumber);
+    const date     = issueDate ? new Date(issueDate) : new Date();
+    const bookName = trim_(row[columns.BOOK_NAME]);
+    // If the book was reserved, note the reserver so we can release their count.
+    const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
 
-      const r        = i + 1;
-      const date     = issueDate ? new Date(issueDate) : new Date();
-      const bookName = trim_(data[i][columns.BOOK_NAME]);
+    row[columns.ISSUED_TO] = subscriberName.trim();
+    row[columns.STATUS] = 'Issued';
+    // Clear the reservation link — the book is now issued, not reserved.
+    if (linkColumns.reservationId !== -1)        row[linkColumns.reservationId] = '';
+    if (linkColumns.reservedCustomerId !== -1)   row[linkColumns.reservedCustomerId] = '';
+    if (linkColumns.reservedCustomerName !== -1) row[linkColumns.reservedCustomerName] = '';
+    if (linkColumns.reservedAt !== -1)           row[linkColumns.reservedAt] = '';
+    if (linkColumns.reservationUpdatedAt !== -1) row[linkColumns.reservationUpdatedAt] = new Date();
+    setSheetRowValues_(sheet, bookRowNumber, row);
 
-      sheet.getRange(r, columns.ISSUED_TO   + 1).setValue(subscriberName.trim());
-      sheet.getRange(r, columns.STATUS      + 1).setValue('Issued');
-
-      // Log to customer's named tab
-      logIssueToCustTab_(subscriberName.trim(), bookNo.trim(), bookName, date);
-
-      invalidatePublicBooksCache_();
-      return { success: true, message: '✅ Book marked as issued to ' + subscriberName.trim() };
+    if (ownerCustomerId) {
+      try { adjustCustomerActiveReservationCountById_(ownerCustomerId, -1); } catch (e) { /* non-fatal */ }
     }
-    return { success: false, error: 'Book not found.' };
+
+    // Log to customer's named tab
+    logIssueToCustTab_(subscriberName.trim(), bookNo.trim(), bookName, date);
+
+    invalidatePublicBooksCache_();
+    return { success: true, message: '✅ Book marked as issued to ' + subscriberName.trim() };
   } catch (err) {
     return reportError_('issueBook', err);
   }
@@ -1251,6 +1261,59 @@ function cancelReservation(bookNo, adminCredential) {
   } catch (err) {
     return reportError_('cancelReservation', err);
   }
+}
+
+/**
+ * ONE-TIME REPAIR — run from the Apps Script editor.
+ * Fixes rows left in an inconsistent state (Status = Available but reservation
+ * link fields still populated) — e.g. from the old cancelReservation that only
+ * flipped the status. Clears the stale link fields on every such row and
+ * reconciles each affected customer's active-reservation count.
+ */
+function repairStaleReservationLinks() {
+  const { sheet, headerRow, columns } = getSheetAndHeader_();
+  const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+  const data = sheet.getDataRange().getValues();
+  const affectedCustomerIds = {};
+  let fixed = 0;
+
+  for (let i = headerRow + 1; i < data.length; i++) {
+    const row = data[i];
+    if (!trim_(row[columns.BOOK_NO])) continue;
+    const status = trim_(row[columns.STATUS]);
+    const hasLink =
+      (linkColumns.reservationId !== -1 && trim_(row[linkColumns.reservationId])) ||
+      (linkColumns.reservedCustomerId !== -1 && trim_(row[linkColumns.reservedCustomerId])) ||
+      (linkColumns.reservedCustomerName !== -1 && trim_(row[linkColumns.reservedCustomerName])) ||
+      (linkColumns.reservedAt !== -1 && trim_(row[linkColumns.reservedAt]));
+
+    // Inconsistent = not currently Reserved, yet carrying reservation link data.
+    if (status !== 'Reserved' && hasLink) {
+      const ownerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
+      if (ownerId) affectedCustomerIds[ownerId] = true;
+      if (linkColumns.reservationId !== -1)        row[linkColumns.reservationId] = '';
+      if (linkColumns.reservedCustomerId !== -1)   row[linkColumns.reservedCustomerId] = '';
+      if (linkColumns.reservedCustomerName !== -1) row[linkColumns.reservedCustomerName] = '';
+      if (linkColumns.reservedAt !== -1)           row[linkColumns.reservedAt] = '';
+      setSheetRowValues_(sheet, i + 1, row);
+      fixed++;
+    }
+  }
+
+  // Reconcile each affected customer's active count to their true Reserved rows.
+  // Reset the request cache so the reconcile scan reads the rows we just wrote.
+  REQUEST_CACHE_.masterData = null;
+  const reconciled = [];
+  Object.keys(affectedCustomerIds).forEach(customerId => {
+    const trueCount = getActiveReservationsForCustomer_(customerId).length;
+    try { adjustCustomerActiveReservationCountByIdTo_(customerId, trueCount); } catch (e) {}
+    reconciled.push(customerId + '=' + trueCount);
+  });
+
+  invalidatePublicBooksCache_();
+  const msg = 'Repaired ' + fixed + ' stale row(s). Reconciled counts: ' + (reconciled.join(', ') || 'none');
+  Logger.log(msg);
+  return { success: true, fixed, reconciled, message: msg };
 }
 
 // ─────────────────────────────────────────────
