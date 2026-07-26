@@ -204,7 +204,8 @@
   .modal-header .btn-close { filter: invert(1); }
   .modal-title { font-size: 1rem; }
 
-  .detail-img {
+  /* ── ONE standard book cover for ALL modals (detail, limit, confirm) ── */
+  .detail-img, .reservation-thumb, .confirm-cover {
     width: 120px;
     height: 160px;
     object-fit: cover;
@@ -212,48 +213,27 @@
     box-shadow: 0 2px 8px rgba(0,0,0,.2);
     flex-shrink: 0;
   }
-  .detail-img-placeholder {
-    width: 120px; height: 160px;
+  .detail-img-placeholder, .reservation-thumb-placeholder, .confirm-cover-placeholder {
+    width: 120px;
+    height: 160px;
     background: #f0f4f0;
     border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 2.5rem; color: #bbb; flex-shrink: 0;
-  }
-
-  /* ── Reservation list thumbnail (limit modal) ── */
-  .reservation-thumb {
-    width: 60px;
-    height: 80px;
-    object-fit: cover;
-    border-radius: 6px;
-    flex-shrink: 0;
-    box-shadow: 0 1px 4px rgba(0,0,0,.15);
-  }
-  .reservation-thumb-placeholder {
-    background: #f0f4f0;
     display: flex;
     align-items: center;
     justify-content: center;
     color: #bbb;
-    font-size: 1.6rem;
-  }
-
-  /* ── Confirm-dialog book cover (large, readable) ── */
-  .confirm-cover {
-    width: 90px;
-    height: 120px;
-    object-fit: cover;
-    border-radius: 8px;
+    font-size: 2.5rem;
     flex-shrink: 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,.2);
   }
-  .confirm-cover-placeholder {
-    background: #f0f4f0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #bbb;
-    font-size: 2.4rem;
+  /* On small phones, shrink uniformly so cover + text + buttons still fit a row. */
+  @media (max-width: 480px) {
+    .detail-img, .reservation-thumb, .confirm-cover,
+    .detail-img-placeholder, .reservation-thumb-placeholder, .confirm-cover-placeholder {
+      width: 90px; height: 120px;
+    }
+    .detail-img-placeholder, .reservation-thumb-placeholder, .confirm-cover-placeholder {
+      font-size: 2rem;
+    }
   }
 
   .status-pill {
