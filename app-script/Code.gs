@@ -731,7 +731,12 @@ function getBooks(filters, adminCredential, customerToken) {
     const linkColumns = getExistingBookReservationLinkColumns_(sheet, headerRow);
     const range    = sheet.getDataRange();
     const displayData = range.getDisplayValues();
-    const imageMap = getCachedImageMap_();
+    // Build the image map if the cache is cold so the FIRST getBooks already
+    // returns image URLs — avoids the "load once without images, reload with
+    // images" flash. The Drive scan only runs on a cold cache (30-min TTL);
+    // warm requests are cache hits, and the public books result is cached with
+    // the URLs baked in so later visitors get them for free.
+    const imageMap = getImageMap_();
 
     const books = [];
     for (let i = headerRow + 1; i < displayData.length; i++) {

@@ -144,6 +144,23 @@
   .badge-reserved  { background: #fb8c00; color: #fff; }
   .badge-issued    { background: #e53935; color: #fff; }
 
+  /* ── Optimistic "saving…" overlay on a card ── */
+  .card-saving {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: rgba(255,255,255,.72);
+    color: #444;
+    font-size: .78rem;
+    font-weight: 600;
+    z-index: 3;
+    backdrop-filter: blur(1px);
+  }
+  .book-card.is-saving { pointer-events: none; }
+
   .book-info {
     padding: 8px 10px 10px;
     flex: 1;
@@ -292,6 +309,36 @@
   /* ── Toast ── */
   .toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; }
 
+  /* ── Sticky action banner (always visible under the header) ── */
+  .action-banner {
+    position: fixed;
+    top: var(--app-header-height);
+    left: 0; right: 0;
+    z-index: 9998;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    color: #fff;
+    font-size: .9rem;
+    font-weight: 600;
+    box-shadow: 0 3px 10px rgba(0,0,0,.18);
+    transform: translateY(-120%);
+    transition: transform .28s ease;
+  }
+  .action-banner.show { transform: translateY(0); }
+  .action-banner .ab-icon { font-size: 1.1rem; display: flex; }
+  .action-banner .ab-msg  { flex: 1; min-width: 0; }
+  .action-banner .ab-close {
+    background: rgba(255,255,255,.25); border: none; color: #fff;
+    width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .action-banner.ab-success { background: #2e7d32; }
+  .action-banner.ab-danger  { background: #c62828; }
+  .action-banner.ab-pending { background: #37474f; }
+  .action-banner .spinner-border { width: 1.05rem; height: 1.05rem; border-width: .15em; }
+
   /* ── Admin login bar ── */
   .admin-bar {
     background: #fff8e1;
@@ -382,6 +429,13 @@
     </button>
   </div>
 </header>
+
+<!-- ══════════════ STICKY ACTION BANNER ══════════════ -->
+<div class="action-banner" id="actionBanner" role="status" aria-live="polite">
+  <span class="ab-icon" id="actionBannerIcon"></span>
+  <span class="ab-msg" id="actionBannerMsg"></span>
+  <button class="ab-close" onclick="hideBanner()" aria-label="Dismiss"><i class="bi bi-x"></i></button>
+</div>
 
 <!-- ══════════════ ADMIN LOGIN BAR ══════════════ -->
 <div class="admin-bar" id="adminBar" style="display:none">
@@ -757,7 +811,6 @@ let customerToken = localStorage.getItem('kfkCustomerToken') || '';
 let currentCustomer = null;
 let searchTimer  = null;
 let filters      = { language: '', ageGroup: '', status: '', search: '', withImage: false };
-let imageWarmupAttempted = false;
 // PERF: cache the logged-in customer's active reservations for the session so
 // opening a reserved book's detail modal doesn't fire a full-sheet server scan
 // (getMyReservations) every single time. Invalidated on reserve/unreserve.
@@ -815,18 +868,8 @@ function onBooksLoaded(result) {
   allBooks.sort((a, b) => (b.imageUrl ? 1 : 0) - (a.imageUrl ? 1 : 0));
   renderAgeGroupFilters();
   applyFilters();
-  maybeWarmImageCache();
-}
-
-function maybeWarmImageCache() {
-  if (imageWarmupAttempted || !allBooks.length || allBooks.some(book => book.imageUrl)) return;
-  imageWarmupAttempted = true;
-  google.script.run
-    .withSuccessHandler(res => {
-      if (res && res.success && res.imageCount > 0) loadBooks();
-    })
-    .withFailureHandler(() => {})
-    .warmImageCache();
+  // Note: getBooks now builds the image map on a cold cache, so the first load
+  // already includes image URLs — no warm-then-reload second pass needed.
 }
 
 // ════════════════════════════════════════════════
@@ -930,11 +973,15 @@ function bookCardHtml(book) {
         <i class="bi bi-person me-1"></i>${escHtml(book.issuedTo)}
       </div>`
     : '';
-  return `<div class="book-card ${book.status !== 'Available' ? 'unavailable' : ''}"
+  const savingOverlay = book._saving
+    ? `<div class="card-saving"><span class="spinner-border spinner-border-sm"></span> ${escHtml(book._saving)}…</div>`
+    : '';
+  return `<div class="book-card ${book.status !== 'Available' ? 'unavailable' : ''} ${book._saving ? 'is-saving' : ''}"
                 data-book-no="${escAttr(book.bookNo)}">
     <div class="book-img-wrap">
       ${imgHtml}${placeholder}
       <span class="status-badge badge-${sc}">${escHtml(book.status)}</span>
+      ${savingOverlay}
     </div>
     <div class="book-info">
       <div class="book-title">${escHtml(book.bookName)}</div>
@@ -1135,8 +1182,16 @@ function buildAdminSection(book) {
 function openReserve() {
   if (!activeBook) return;
   pendingReserveBookNo = activeBook.bookNo;
+
   if (currentCustomer && customerToken) {
-    reserveLoggedInCustomer(activeBook.bookNo);
+    // Immediate feedback: disable the button + show a spinner the instant it's
+    // clicked, before the modal closes, so there's no dead moment.
+    const btn = document.getElementById('bookReserveBtn');
+    setInlineButtonLoading(btn, true, 'Reserving…');
+    const bookNo = activeBook.bookNo;
+    // Defer one frame so the button repaints in its loading state before we run
+    // the (synchronous) optimistic update + modal hide.
+    requestAnimationFrame(() => reserveLoggedInCustomer(bookNo));
     return;
   }
 
@@ -1181,63 +1236,137 @@ function submitReservation() {
     .reserveBook(activeBook.bookNo, name, phone, notes);
 }
 
-function reserveLoggedInCustomer(bookNo) {
-  const btn = document.getElementById('bookReserveBtn');
-  myReservationsCache = null; // PERF: reservations change; force a fresh fetch next time
-  setInlineButtonLoading(btn, true, 'Reserving…');
+// Mirror of the server's parseMonthlyReservationLimit_: explicit limit first,
+// else the first number found in the subscription plan name. 0 = unknown.
+function customerReservationLimit() {
+  if (!currentCustomer) return 0;
+  const explicit = parseInt(currentCustomer.monthlyReservationLimit, 10);
+  if (explicit > 0) return explicit;
+  const planMatch = String(currentCustomer.subscriptionPlan || '').match(/\d+/);
+  return planMatch ? parseInt(planMatch[0], 10) : 0;
+}
+
+// ── Optimistic UI helpers ─────────────────────────────────────────────
+// Snapshot a book's mutable fields so we can roll back if the background
+// server call fails. Returns null if the book isn't loaded.
+function snapshotBook_(bookNo) {
+  const b = allBooks.find(x => x.bookNo === bookNo);
+  if (!b) return null;
+  return {
+    bookNo,
+    status: b.status,
+    issuedTo: b.issuedTo,
+    reservationId: b.reservationId,
+    reservedCustomerId: b.reservedCustomerId,
+    isMyReservation: b.isMyReservation
+  };
+}
+
+// Short display title for a book number (falls back to the number itself).
+function bookTitle_(bookNo) {
+  const b = allBooks.find(x => x.bookNo === bookNo);
+  return (b && b.bookName) ? b.bookName : bookNo;
+}
+
+// Restore a book to a previously captured snapshot.
+function restoreBook_(snap) {
+  if (!snap) return;
+  refreshBook(snap.bookNo, snap.status, snap.issuedTo || '', '', '', '', {
+    reservationId: snap.reservationId,
+    reservedCustomerId: snap.reservedCustomerId,
+    isMyReservation: snap.isMyReservation
+  });
+}
+
+// OPTIMISTIC reserve: update the UI immediately, call the server in the
+// background, reconcile on success, roll back on failure. Booking safety is
+// unchanged — the server still validates + writes under the lock.
+// swapContext (optional): { cancelledTitle } when this reserve follows an
+// unreserve from the limit modal — lets the banner name both books.
+function reserveLoggedInCustomer(bookNo, swapContext) {
+  // Client-side limit pre-check from data we already have — avoids a doomed
+  // round-trip and shows the limit modal instantly when already at limit.
+  // Mirrors the server's parseMonthlyReservationLimit_ (explicit limit, else the
+  // first number in the plan name). If it can't be determined (0), we skip the
+  // pre-check and let the server enforce it (a stale case just costs one retry).
+  const myReservations = getMyReservationsFromLoadedBooks();
+  const limit = customerReservationLimit();
+  if (limit && myReservations.length >= limit) {
+    // At limit: reset the reserve button, close the book modal, show the swap modal.
+    setInlineButtonLoading(document.getElementById('bookReserveBtn'), false);
+    bookModal.hide();
+    showReservationLimitModal({ monthlyLimit: limit }, myReservations);
+    return;
+  }
+
+  // Optimistically flip the card to "reserved by me", show an inline "Reserving…"
+  // indicator on the card, and close the modal now. The confirmation/error toast
+  // is shown when the server replies (below), not up front.
+  const title = bookTitle_(bookNo);
+  const cancelledTitle = swapContext && swapContext.cancelledTitle;
+  showBanner(
+    cancelledTitle ? `Cancelled “${cancelledTitle}” · Reserving “${title}”…` : `Reserving “${title}”…`,
+    'pending'
+  );
+  const snap = snapshotBook_(bookNo);
+  myReservationsCache = null;
+  const tempReservationId = 'TEMP-' + Date.now();
+  refreshBook(bookNo, 'Reserved', '', '', '', '', {
+    reservationId: tempReservationId,
+    reservedCustomerId: currentCustomer ? currentCustomer.customerId : '',
+    isMyReservation: true
+  });
+  markBookSaving_(bookNo, 'Reserving');
+  if (pendingReserveBookNo === bookNo) pendingReserveBookNo = '';
+  bookModal.hide();
+
   const __t0 = Date.now(); // PERF: total round-trip incl. google.script.run overhead
   google.script.run
     .withSuccessHandler(res => {
       console.log('[PERF] reserve round-trip: ' + (Date.now() - __t0) + 'ms');
+      clearBookSaving_(bookNo);
       if (res.success) {
         limitRetryDone = false;
-        showToast(res.message || 'Book reserved.', 'success');
+        // Reconcile the temp id with the real reservationId from the server.
         refreshBook(bookNo, 'Reserved', '', '', '', '', {
-          reservationId: res.reservationId || '',
+          reservationId: res.reservationId || tempReservationId,
           reservedCustomerId: res.reservedCustomerId || (currentCustomer ? currentCustomer.customerId : ''),
           isMyReservation: true
         });
-        if (pendingReserveBookNo === bookNo) pendingReserveBookNo = '';
-        bookModal.hide();
+        showBanner(
+          cancelledTitle ? `✓ Cancelled “${cancelledTitle}” · Reserved “${title}”` : `✓ Reserved “${title}”`,
+          'success'
+        );
       } else if (res.code === 'LIMIT_REACHED') {
-        setInlineButtonLoading(btn, false);
-        // Cross-check the server's cached count against what the browser
-        // actually shows for this customer. If the server over-counted (stale
-        // cache) and we're really under the limit, correct the server once and
-        // retry — no false rejection.
-        const myReservations = getMyReservationsFromLoadedBooks();
-        const limit = res.monthlyLimit || 0;
-        if (!limitRetryDone && myReservations.length < limit) {
-          // Server's cached count was stale-high. Fix it, THEN retry (chained so
-          // the retry runs after the count is corrected, not before).
+        // Rare: server disagreed (e.g. reserved elsewhere). Roll back + reconcile.
+        restoreBook_(snap);
+        const serverReservations = getMyReservationsFromLoadedBooks();
+        if (!limitRetryDone && serverReservations.length < (res.monthlyLimit || 0)) {
           limitRetryDone = true;
-          setInlineButtonLoading(btn, true, 'Reserving…');
           myReservationsCache = null;
           google.script.run
             .withSuccessHandler(() => reserveLoggedInCustomer(bookNo))
-            .withFailureHandler(() => {
-              setInlineButtonLoading(btn, false);
-              showReservationLimitModal(res, myReservations);
-            })
+            .withFailureHandler(() => { hideBanner(); showReservationLimitModal(res, serverReservations); })
             .getMyReservations(customerToken);
           return;
         }
         limitRetryDone = false;
-        showReservationLimitModal(res, myReservations);
+        hideBanner(); // a modal takes over
+        showReservationLimitModal(res, res.reservations || serverReservations);
       } else if (res.code === 'UNAVAILABLE') {
-        // Someone else reserved/issued this book first — sync the UI to reality.
-        setInlineButtonLoading(btn, false);
-        showToast(res.error || 'Sorry, this book is no longer available.', 'danger');
+        // Someone else got it first — roll back to the true (taken) status.
+        restoreBook_(snap);
         refreshBook(res.bookNo || bookNo, res.status || 'Reserved', '', '', '');
-        bookModal.hide();
+        showBanner(res.error || `“${title}” is no longer available`, 'danger');
       } else {
-        setInlineButtonLoading(btn, false);
-        showToast(res.error || 'Reservation failed.', 'danger');
+        restoreBook_(snap);
+        showBanner(res.error || `Could not reserve “${title}”`, 'danger');
       }
     })
     .withFailureHandler(() => {
-      setInlineButtonLoading(btn, false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      clearBookSaving_(bookNo);
+      restoreBook_(snap);
+      showBanner(`Could not reserve “${title}”. Please try again.`, 'danger');
     })
     .reserveBookForCustomer(bookNo, customerToken);
 }
@@ -1301,55 +1430,86 @@ function showReservationLimitModal(res, clientReservations) {
   limitModal.show();
 }
 
+// OPTIMISTIC swap from the limit modal: instantly show the chosen book as
+// Available and close the modal. The unreserve still commits on the server
+// BEFORE we retry the reserve (so the server sees the customer under limit);
+// the retry reserve is itself optimistic. Roll back the swapped book on failure.
 function unreserveThenRetry(reservationId, bookNo) {
   if (!reservationId || !pendingReserveBookNo) return;
-  const btn = document.getElementById('limitUnreserve_' + reservationId);
-  myReservationsCache = null; // PERF: reservations change; force a fresh fetch next time
-  setInlineButtonLoading(btn, true, 'Unreserving…');
+  const swapBookNo = bookNo || '';
+  const snap = swapBookNo ? snapshotBook_(swapBookNo) : null;
+  const pending = pendingReserveBookNo;
+  const cancelledTitle = swapBookNo ? bookTitle_(swapBookNo) : '';
+  const pendingTitle = bookTitle_(pending);
+  myReservationsCache = null;
+
+  // Optimistic: mark the swapped-out book available (with inline indicator) and
+  // close the modal now. Show a persistent banner describing the whole swap.
+  showBanner(`Cancelling “${cancelledTitle}” · reserving “${pendingTitle}”…`, 'pending');
+  if (swapBookNo) { refreshBook(swapBookNo, 'Available', '', '', ''); markBookSaving_(swapBookNo, 'Cancelling'); }
+  limitModal.hide();
+
   const __t0 = Date.now(); // PERF: total unreserve round-trip (from limit modal)
   google.script.run
     .withSuccessHandler(res => {
       console.log('[PERF] unreserve(fromLimit) round-trip: ' + (Date.now() - __t0) + 'ms');
+      clearBookSaving_(swapBookNo);
       if (res.success) {
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
-        limitModal.hide();
-        reserveLoggedInCustomer(pendingReserveBookNo);
+        // Now that the unreserve is committed, run the (optimistic) reserve; pass
+        // the cancelled title so its success banner names both books.
+        reserveLoggedInCustomer(pending, { cancelledTitle });
       } else {
-        setInlineButtonLoading(btn, false);
-        showToast(res.error || 'Could not unreserve this book.', 'danger');
+        restoreBook_(snap);
+        showBanner(res.error || `Could not cancel “${cancelledTitle}”`, 'danger');
       }
     })
     .withFailureHandler(() => {
-      setInlineButtonLoading(btn, false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      clearBookSaving_(swapBookNo);
+      restoreBook_(snap);
+      showBanner(`Could not cancel “${cancelledTitle}”. Please try again.`, 'danger');
     })
-    .unreserveMyBook(reservationId, customerToken, bookNo || '');
+    .unreserveMyBook(reservationId, customerToken, swapBookNo);
 }
 
+// OPTIMISTIC unreserve: flip the card to Available + close the modal instantly,
+// then confirm with the server in the background; roll back on failure.
 function unreserveMyActiveBook(reservationId) {
   if (!reservationId) return;
-  const btn = document.getElementById('myUnreserveBtn');
-  myReservationsCache = null; // PERF: reservations change; force a fresh fetch next time
-  setInlineButtonLoading(btn, true, 'Unreserving…');
+  const bookNo = activeBook ? activeBook.bookNo : '';
+  const title = bookTitle_(bookNo);
+  // Immediate feedback: disable the button + spinner the instant it's clicked.
+  setInlineButtonLoading(document.getElementById('myUnreserveBtn'), true, 'Cancelling…');
+  const snap = snapshotBook_(bookNo);
+  myReservationsCache = null;
+
+  // Optimistic: mark available, show a persistent banner + inline "Cancelling…",
+  // close the modal. Banner is updated when the server replies.
+  showBanner(`Cancelling “${title}”…`, 'pending');
+  if (bookNo) refreshBook(bookNo, 'Available', '', '', '');
+  markBookSaving_(bookNo, 'Cancelling');
+  bookModal.hide();
 
   const __t0 = Date.now(); // PERF: total unreserve round-trip
   google.script.run
     .withSuccessHandler(res => {
       console.log('[PERF] unreserve round-trip: ' + (Date.now() - __t0) + 'ms');
+      clearBookSaving_(bookNo);
       if (res.success) {
-        showToast(res.message || 'Reservation cancelled.', 'success');
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
-        bookModal.hide();
+        showBanner(`✓ Cancelled “${title}”`, 'success');
       } else {
-        setInlineButtonLoading(btn, false);
-        showToast(res.error || 'Could not unreserve this book.', 'danger');
+        // Server rejected (e.g. not yours / already changed) — roll back.
+        restoreBook_(snap);
+        showBanner(res.error || `Could not cancel “${title}”`, 'danger');
       }
     })
     .withFailureHandler(() => {
-      setInlineButtonLoading(btn, false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      clearBookSaving_(bookNo);
+      restoreBook_(snap);
+      showBanner(`Could not cancel “${title}”. Please try again.`, 'danger');
     })
-    .unreserveMyBook(reservationId, customerToken, activeBook ? activeBook.bookNo : '');
+    .unreserveMyBook(reservationId, customerToken, bookNo);
 }
 
 // ════════════════════════════════════════════════
@@ -1623,6 +1783,20 @@ function refreshBook(bookNo, status, issuedTo, phone, notes, issueDate = '', res
   applyFilters();
 }
 
+// Set/clear the transient "Saving…" overlay on a book's card and re-render.
+function markBookSaving_(bookNo, label) {
+  const b = allBooks.find(x => x.bookNo === bookNo);
+  if (!b) return;
+  b._saving = label || 'Saving';
+  applyFilters();
+}
+function clearBookSaving_(bookNo) {
+  const b = allBooks.find(x => x.bookNo === bookNo);
+  if (!b || !b._saving) return;
+  delete b._saving;
+  applyFilters();
+}
+
 function statusClass(status) {
   return { 'Available': 'available', 'Reserved': 'reserved', 'Issued': 'issued' }[status] || 'available';
 }
@@ -1712,6 +1886,34 @@ function showToast(msg, type) {
   el.style.background = colors[type] || '#333';
   document.getElementById('toastMsg').textContent = msg;
   bootstrap.Toast.getOrCreateInstance(el, { delay: 3500 }).show();
+}
+
+// Sticky action banner — always visible under the header, so reserve/cancel
+// confirmations aren't missed while scrolling.
+//   type: 'pending' (spinner, stays until updated) | 'success' | 'danger'
+//   autoHideMs: 0 keeps it up (use for 'pending'); default 5000 for terminal states.
+let _bannerTimer = null;
+function showBanner(msg, type, autoHideMs) {
+  const banner = document.getElementById('actionBanner');
+  const icon = document.getElementById('actionBannerIcon');
+  const msgEl = document.getElementById('actionBannerMsg');
+
+  banner.classList.remove('ab-success', 'ab-danger', 'ab-pending');
+  banner.classList.add('ab-' + (type || 'pending'));
+  icon.innerHTML = type === 'success' ? '<i class="bi bi-check-circle-fill"></i>'
+    : type === 'danger' ? '<i class="bi bi-exclamation-triangle-fill"></i>'
+    : '<span class="spinner-border spinner-border-sm"></span>';
+  msgEl.textContent = msg;
+  banner.classList.add('show');
+
+  clearTimeout(_bannerTimer);
+  const delay = autoHideMs == null ? (type === 'pending' ? 0 : 5000) : autoHideMs;
+  if (delay > 0) _bannerTimer = setTimeout(hideBanner, delay);
+}
+
+function hideBanner() {
+  clearTimeout(_bannerTimer);
+  document.getElementById('actionBanner').classList.remove('show');
 }
 
 function onError(err) {
