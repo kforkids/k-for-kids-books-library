@@ -323,17 +323,31 @@
     font-size: .9rem;
     font-weight: 600;
     box-shadow: 0 3px 10px rgba(0,0,0,.18);
-    transform: translateY(-120%);
-    transition: transform .28s ease;
+    /* Hidden state: fully off-screen AND invisible/inert, so height math can't
+       leave it peeking below the header. */
+    transform: translateY(-200%);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform .28s ease, opacity .2s ease, visibility 0s linear .28s;
   }
-  .action-banner.show { transform: translateY(0); }
+  .action-banner.show {
+    transform: translateY(0);
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: transform .28s ease, opacity .2s ease, visibility 0s;
+  }
   .action-banner .ab-icon { font-size: 1.1rem; display: flex; }
   .action-banner .ab-msg  { flex: 1; min-width: 0; }
   .action-banner .ab-close {
     background: rgba(255,255,255,.25); border: none; color: #fff;
-    width: 24px; height: 24px; border-radius: 50%; cursor: pointer;
+    width: 28px; height: 28px; border-radius: 50%; cursor: pointer;
     display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    font-size: 1.1rem; line-height: 1; padding: 0;
   }
+  .action-banner .ab-close:hover { background: rgba(255,255,255,.4); }
+  .action-banner .ab-close > * { pointer-events: none; }
   .action-banner.ab-success { background: #2e7d32; }
   .action-banner.ab-danger  { background: #c62828; }
   .action-banner.ab-pending { background: #37474f; }
@@ -434,7 +448,7 @@
 <div class="action-banner" id="actionBanner" role="status" aria-live="polite">
   <span class="ab-icon" id="actionBannerIcon"></span>
   <span class="ab-msg" id="actionBannerMsg"></span>
-  <button class="ab-close" onclick="hideBanner()" aria-label="Dismiss"><i class="bi bi-x"></i></button>
+  <button type="button" class="ab-close" id="actionBannerClose" aria-label="Dismiss"><i class="bi bi-x"></i></button>
 </div>
 
 <!-- ══════════════ ADMIN LOGIN BAR ══════════════ -->
@@ -817,9 +831,11 @@ let filters      = { language: '', ageGroup: '', status: '', search: '', withIma
 let myReservationsCache = null;
 // Guard so a stale-high server count triggers at most ONE auto-retry, never a loop.
 let limitRetryDone = false;
-// True while a reserve/unreserve/swap round-trip is in flight — blocks a second
-// overlapping action (and tells the user to wait) until it resolves.
+// True while a reserve/unreserve/swap round-trip is in flight. A second reserve
+// attempted during this window is QUEUED (queuedReserveBookNo) and runs
+// automatically when the in-flight action finishes — no re-click needed.
 let reservationActionInFlight = false;
+let queuedReserveBookNo = '';
 
 const bookModal    = new bootstrap.Modal('#bookModal');
 const reserveModal = new bootstrap.Modal('#reserveModal');
@@ -854,6 +870,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (entries[0].isIntersecting) appendBooks();
   }, { rootMargin: '200px' });
   observer.observe(sentinel);
+
+  // Action-banner dismiss button (listener is more reliable than inline onclick).
+  const bannerClose = document.getElementById('actionBannerClose');
+  if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
 });
 
 function loadBooks() {
@@ -1186,14 +1206,24 @@ function openReserve() {
   if (!activeBook) return;
 
   if (currentCustomer && customerToken) {
-    // Block if another reserve/unreserve is still saving.
-    if (!beginReservationAction_()) return;
-    pendingReserveBookNo = activeBook.bookNo;
+    const bookNo = activeBook.bookNo;
+    pendingReserveBookNo = bookNo;
+    const btn = document.getElementById('bookReserveBtn');
+
+    // If another action is still saving, QUEUE this reserve instead of dropping
+    // the click. Keep the modal open with a clear "waiting" button; it runs
+    // automatically when the in-flight action finishes.
+    if (reservationActionInFlight) {
+      queuedReserveBookNo = bookNo;
+      setInlineButtonLoading(btn, true, 'Waiting…');
+      showBanner('Reserving this next — finishing your last action first…', 'pending', 3500);
+      return;
+    }
+
+    beginReservationAction_();
     // Immediate feedback: disable the button + show a spinner the instant it's
     // clicked, before the modal closes, so there's no dead moment.
-    const btn = document.getElementById('bookReserveBtn');
     setInlineButtonLoading(btn, true, 'Reserving…');
-    const bookNo = activeBook.bookNo;
     // Defer one frame so the button repaints in its loading state before we run
     // the (synchronous) optimistic update + modal hide.
     requestAnimationFrame(() => reserveLoggedInCustomer(bookNo));
@@ -1921,6 +1951,7 @@ function showToast(msg, type) {
 // confirmations aren't missed while scrolling.
 //   type: 'pending' (spinner, stays until updated) | 'success' | 'danger'
 //   autoHideMs: 0 keeps it up (use for 'pending'); default 5000 for terminal states.
+const BANNER_AUTO_HIDE_MS = 5000; // success/error banners auto-close after 5s
 let _bannerTimer = null;
 function showBanner(msg, type, autoHideMs) {
   const banner = document.getElementById('actionBanner');
@@ -1935,8 +1966,10 @@ function showBanner(msg, type, autoHideMs) {
   msgEl.textContent = msg;
   banner.classList.add('show');
 
+  // Terminal banners (success/danger) auto-close after BANNER_AUTO_HIDE_MS.
+  // 'pending' stays up (delay 0) until replaced by a terminal state.
   clearTimeout(_bannerTimer);
-  const delay = autoHideMs == null ? (type === 'pending' ? 0 : 5000) : autoHideMs;
+  const delay = autoHideMs == null ? (type === 'pending' ? 0 : BANNER_AUTO_HIDE_MS) : autoHideMs;
   if (delay > 0) _bannerTimer = setTimeout(hideBanner, delay);
 }
 
@@ -1958,6 +1991,17 @@ function beginReservationAction_() {
 
 function endReservationAction_() {
   reservationActionInFlight = false;
+  // Auto-run a reserve the user queued while this action was in flight. Defer to
+  // a microtask so the just-finished action's UI updates settle first. Proceed
+  // regardless of whether the prior action succeeded — the reserve validates
+  // itself (limit pre-check + server check under the lock).
+  if (queuedReserveBookNo) {
+    const bookNo = queuedReserveBookNo;
+    queuedReserveBookNo = '';
+    Promise.resolve().then(() => {
+      if (beginReservationAction_()) reserveLoggedInCustomer(bookNo);
+    });
+  }
 }
 
 function onError(err) {
