@@ -4,7 +4,20 @@
 
 **Symptom:** A single reservation takes **3+ seconds**.
 
-**Status:** Round 18 — admin banner feedback, yellow in-progress banner, no admin reserve, hide-from-users. Runtime confirmation pending.
+**Status:** Round 19 — unified login (admin + customer in one modal) + Remember me. Runtime confirmation pending.
+
+---
+
+## Round 19 — one login experience + Remember me
+
+**Problem:** two separate login paths — customers used a modal, admins used a separate yellow inline bar. Also no way to remember the username.
+
+**Fix (client only, `Index.html`):**
+- **One modal, one entry point.** Removed the separate admin bar and the header shield button. The single "Login" button opens the auth modal, now with three tabs: **Login** (email/phone), **Join with Invite Code**, and **Admin** (password). `submitCustomerAuth` routes by active tab; the footer button label follows the tab (Login / Join / Login as admin). Admin login closes the modal and shows the Admin Mode badge (moved to the header).
+- **Remember me.** A checkbox on the Login tab saves only the **username** (email/phone) to `localStorage` (`kfkRememberedUser`) and prefills it next visit; unchecking forgets it. The password is intentionally NOT stored — the login fields are wrapped in a `<form>` with proper `autocomplete`, so the browser's own password manager handles saving/autofilling the password securely.
+- **Unified logout.** One `logoutEveryone()` signs out of whichever session(s) are active; `renderCustomerState` now toggles Login/Logout for admin OR customer sessions.
+
+No server change — `loginAdmin`/`loginCustomer` are unchanged.
 
 ---
 

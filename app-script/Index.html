@@ -468,14 +468,14 @@
   </div>
   <div class="customer-auth">
     <span id="customerChip" class="customer-chip" style="display:none"></span>
-    <button id="customerLoginBtn" class="btn btn-sm btn-light" onclick="openCustomerAuth()" title="Customer login">
+    <span id="adminModeBadge" style="display:none" class="admin-mode-badge">
+      <i class="bi bi-shield-check me-1"></i>Admin Mode
+    </span>
+    <button id="customerLoginBtn" class="btn btn-sm btn-light" onclick="openCustomerAuth()" title="Login">
       <i class="bi bi-person-circle me-1"></i>Login
     </button>
-    <button id="customerLogoutBtn" class="btn btn-sm btn-outline-light" onclick="logoutCustomer()" style="display:none">
+    <button id="customerLogoutBtn" class="btn btn-sm btn-outline-light" onclick="logoutEveryone()" style="display:none">
       Logout
-    </button>
-    <button class="btn btn-sm btn-outline-light" onclick="toggleAdminBar()" title="Admin">
-      <i class="bi bi-shield-lock"></i>
     </button>
   </div>
 </header>
@@ -485,18 +485,6 @@
   <span class="ab-icon" id="actionBannerIcon"></span>
   <span class="ab-msg" id="actionBannerMsg"></span>
   <button type="button" class="ab-close" id="actionBannerClose" aria-label="Dismiss"><i class="bi bi-x"></i></button>
-</div>
-
-<!-- ══════════════ ADMIN LOGIN BAR ══════════════ -->
-<div class="admin-bar" id="adminBar" style="display:none">
-  <label><i class="bi bi-shield-lock me-1"></i>Admin password:</label>
-  <input type="password" id="adminPasswordInput" class="form-control form-control-sm"
-         placeholder="Enter password" onkeydown="if(event.key==='Enter') loginAdmin()">
-  <button class="btn btn-sm btn-warning" onclick="loginAdmin()">Login</button>
-  <button class="btn btn-sm btn-outline-secondary" onclick="logoutAdmin()">Logout</button>
-  <span id="adminModeBadge" style="display:none" class="admin-mode-badge">
-    <i class="bi bi-shield-check me-1"></i>Admin Mode
-  </span>
 </div>
 
 <!-- ══════════════ ADMIN TAB BAR ══════════════ -->
@@ -673,7 +661,7 @@
   <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
-        <h5 class="modal-title"><i class="bi bi-person-circle me-2"></i>Customer Login</h5>
+        <h5 class="modal-title"><i class="bi bi-person-circle me-2"></i>Login</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -684,18 +672,27 @@
           <li class="nav-item" role="presentation">
             <button class="nav-link" id="claim-tab" data-bs-toggle="tab" data-bs-target="#claimPane" type="button" role="tab">Join with Invite Code</button>
           </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="admin-tab" data-bs-toggle="tab" data-bs-target="#adminPane" type="button" role="tab"><i class="bi bi-shield-lock me-1"></i>Admin</button>
+          </li>
         </ul>
         <div class="tab-content">
           <div class="tab-pane fade show active" id="loginPane" role="tabpanel" aria-labelledby="login-tab">
-            <div class="mb-3">
-              <label class="form-label">Email or Phone</label>
-              <input type="text" id="loginIdentifier" class="form-control" autocomplete="username" placeholder="Email address or phone number">
-            </div>
-            <div class="mb-2">
-              <label class="form-label">Password</label>
-              <input type="password" id="loginPassword" class="form-control" autocomplete="current-password"
-                     onkeydown="if(event.key==='Enter') loginCustomer()">
-            </div>
+            <form id="customerLoginForm" onsubmit="return false;" autocomplete="on">
+              <div class="mb-3">
+                <label class="form-label" for="loginIdentifier">Email or Phone</label>
+                <input type="text" id="loginIdentifier" name="username" class="form-control" autocomplete="username" placeholder="Email address or phone number">
+              </div>
+              <div class="mb-2">
+                <label class="form-label" for="loginPassword">Password</label>
+                <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password"
+                       onkeydown="if(event.key==='Enter') loginCustomer()">
+              </div>
+              <div class="form-check mb-1">
+                <input class="form-check-input" type="checkbox" id="rememberMe">
+                <label class="form-check-label small" for="rememberMe">Remember me on this device</label>
+              </div>
+            </form>
           </div>
           <div class="tab-pane fade" id="claimPane" role="tabpanel" aria-labelledby="claim-tab">
             <div class="alert alert-info py-2 small">
@@ -722,6 +719,16 @@
               <input type="password" id="claimPassword" class="form-control" autocomplete="new-password"
                      onkeydown="if(event.key==='Enter') claimExistingCustomer()">
               <div class="form-text">Use at least 8 characters.</div>
+            </div>
+          </div>
+          <div class="tab-pane fade" id="adminPane" role="tabpanel" aria-labelledby="admin-tab">
+            <div class="alert alert-warning py-2 small">
+              <i class="bi bi-shield-lock me-1"></i>Library staff only. Enter the admin password to manage books and customers.
+            </div>
+            <div class="mb-2">
+              <label class="form-label" for="adminPasswordInput">Admin Password</label>
+              <input type="password" id="adminPasswordInput" class="form-control" autocomplete="off"
+                     placeholder="Enter admin password" onkeydown="if(event.key==='Enter') loginAdmin()">
             </div>
           </div>
         </div>
@@ -928,6 +935,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // Action-banner dismiss button (listener is more reliable than inline onclick).
   const bannerClose = document.getElementById('actionBannerClose');
   if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
+
+  // Update the auth modal's submit-button label to match the active tab.
+  const authLabels = { 'login-tab': 'Login', 'claim-tab': 'Join', 'admin-tab': 'Login as admin' };
+  ['login-tab', 'claim-tab', 'admin-tab'].forEach(tabId => {
+    const tab = document.getElementById(tabId);
+    if (tab) tab.addEventListener('shown.bs.tab', () => {
+      document.getElementById('customerAuthSubmitBtn').textContent = authLabels[tabId] || 'Continue';
+    });
+  });
 });
 
 function loadBooks() {
@@ -1817,30 +1833,32 @@ function runAdminAction_(action, bookNo) {
 // ════════════════════════════════════════════════
 // Admin login
 // ════════════════════════════════════════════════
-function toggleAdminBar() {
-  const bar = document.getElementById('adminBar');
-  bar.style.display = bar.style.display === 'none' ? 'flex' : 'none';
-}
-
 function loginAdmin() {
   const pwd = document.getElementById('adminPasswordInput').value;
-  if (!pwd) return;
+  if (!pwd) { showToast('Enter the admin password.', 'warning'); return; }
 
+  setButtonLoading('customerAuthModal', true);
   google.script.run
     .withSuccessHandler(res => {
+      setButtonLoading('customerAuthModal', false);
       if (res && res.success && res.token) {
         adminMode = true;
         adminToken = res.token;
         document.getElementById('adminModeBadge').style.display = '';
         document.getElementById('adminPasswordInput').value     = '';
         document.getElementById('adminTabBar').style.display    = '';
+        customerAuthModal.hide();
+        renderCustomerState(); // toggle header Login→Logout
         showToast('Admin mode active.', 'success');
         loadBooks(); // reload with admin-only fields
       } else {
         showToast((res && res.error) || 'Incorrect password.', 'danger');
       }
     })
-    .withFailureHandler(err => showToast('Something went wrong. Please try again.', 'danger'))
+    .withFailureHandler(err => {
+      setButtonLoading('customerAuthModal', false);
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
     .loginAdmin(pwd);
 }
 
@@ -1851,19 +1869,28 @@ function logoutAdmin() {
   allCustomers   = [];
   activeAdminTab = 'books';
   document.getElementById('adminModeBadge').style.display  = 'none';
-  document.getElementById('adminBar').style.display        = 'none';
   document.getElementById('adminTabBar').style.display     = 'none';
   document.getElementById('customersPanel').style.display  = 'none';
   document.getElementById('searchBarEl').style.display     = '';
   document.getElementById('filterBarEl').style.display     = '';
   document.querySelector('main').style.display             = '';
-  showToast('Logged out of admin mode.', 'secondary');
+  renderCustomerState(); // toggle header Logout→Login (unless a customer is still logged in)
   loadBooks(); // reload without admin-only fields
   if (token) {
     google.script.run
       .withFailureHandler(() => {})
       .logoutAdminSession(token);
   }
+}
+
+// Unified logout — signs out of whichever session(s) are active.
+function logoutEveryone() {
+  const wasAdmin = adminMode;
+  const wasCustomer = Boolean(customerToken);
+  if (wasAdmin) logoutAdmin();
+  if (wasCustomer) logoutCustomer();
+  if (!wasAdmin && !wasCustomer) return;
+  showToast('Logged out.', 'secondary');
 }
 
 // ════════════════════════════════════════════════
@@ -1887,20 +1914,28 @@ function restoreCustomerSession() {
 }
 
 function openCustomerAuth() {
-  document.getElementById('loginIdentifier').value = currentCustomer ? (currentCustomer.email || currentCustomer.phone) : '';
+  // Prefill the remembered username (email/phone) when available.
+  const remembered = localStorage.getItem('kfkRememberedUser') || '';
+  document.getElementById('loginIdentifier').value =
+    (currentCustomer && (currentCustomer.email || currentCustomer.phone)) || remembered;
+  document.getElementById('rememberMe').checked = Boolean(remembered);
+  document.getElementById('adminPasswordInput').value = '';
   document.getElementById('loginPassword').value = '';
   document.getElementById('claimCustomerId').value = '';
   document.getElementById('claimInviteCode').value = '';
   document.getElementById('claimEmail').value = '';
   document.getElementById('claimPhone').value = '';
   document.getElementById('claimPassword').value = '';
+  // Always open on the Login tab with the matching button label.
+  try { bootstrap.Tab.getOrCreateInstance(document.getElementById('login-tab')).show(); } catch (e) {}
+  document.getElementById('customerAuthSubmitBtn').textContent = 'Login';
   customerAuthModal.show();
 }
 
 function submitCustomerAuth() {
-  const claimActive = document.getElementById('claimPane').classList.contains('active');
-  if (claimActive) claimExistingCustomer();
-  else loginCustomer();
+  if (document.getElementById('adminPane').classList.contains('active')) { loginAdmin(); return; }
+  if (document.getElementById('claimPane').classList.contains('active')) { claimExistingCustomer(); return; }
+  loginCustomer();
 }
 
 function loginCustomer() {
@@ -1946,6 +1981,12 @@ function handleCustomerAuthResponse(res) {
     customerToken = res.token;
     currentCustomer = res.customer;
     localStorage.setItem('kfkCustomerToken', customerToken);
+    // "Remember me": store only the username (email/phone), never the password.
+    if (document.getElementById('rememberMe').checked) {
+      localStorage.setItem('kfkRememberedUser', res.customer.email || res.customer.phone || '');
+    } else {
+      localStorage.removeItem('kfkRememberedUser');
+    }
     customerAuthModal.hide();
     renderCustomerState();
     loadBooks();
@@ -1984,17 +2025,19 @@ function renderCustomerState() {
   const loginBtn = document.getElementById('customerLoginBtn');
   const logoutBtn = document.getElementById('customerLogoutBtn');
 
+  // Show the customer name chip when a customer is logged in.
   if (currentCustomer) {
     chip.textContent = currentCustomer.name || currentCustomer.email || currentCustomer.customerId;
     chip.style.display = '';
-    loginBtn.style.display = 'none';
-    logoutBtn.style.display = '';
   } else {
     chip.textContent = '';
     chip.style.display = 'none';
-    loginBtn.style.display = '';
-    logoutBtn.style.display = 'none';
   }
+
+  // Login/Logout toggle reflects EITHER an admin or customer session.
+  const signedIn = adminMode || Boolean(currentCustomer);
+  loginBtn.style.display  = signedIn ? 'none' : '';
+  logoutBtn.style.display = signedIn ? '' : 'none';
 }
 
 // ════════════════════════════════════════════════
