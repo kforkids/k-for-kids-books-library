@@ -717,6 +717,7 @@ function invalidatePublicBooksCache_() {
 
 function getBooks(filters, adminCredential, customerToken) {
   try {
+    resetRequestCache_();
     const isAdmin = adminCredential ? verifyAdminCredential_(adminCredential) : false;
     const currentCustomer = customerToken ? verifyCustomerSession_(customerToken) : null;
 
@@ -809,6 +810,7 @@ function warmImageCache() {
 
 function reserveBook(bookNo, subscriberName, phone, notes) {
   try {
+    resetRequestCache_();
     if (!checkRateLimit_('reserve-book', 5, 300)) {
       return { success: false, error: 'Too many reservation attempts. Please try again later.' };
     }
@@ -825,21 +827,29 @@ function reserveBook(bookNo, subscriberName, phone, notes) {
     const lock = LockService.getScriptLock();
     lock.waitLock(5000);
     try {
-      const { sheet, headerRow, columns } = getSheetAndHeader_();
+      // PERF: locate the single book row with TextFinder (1 row read, not the
+      // whole sheet), verify inside the lock, write once.
+      const ctx = getSheetAndHeader_();
+      const sheet = ctx.sheet, headerRow = ctx.headerRow, columns = ctx.columns;
       const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+
       const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
       if (!bookRowNumber) return { success: false, error: 'Book not found.' };
 
-      const bookRow = getSheetRowValues_(sheet, bookRowNumber);
+      const bookRow  = getSheetRowValues_(sheet, bookRowNumber);
       const status   = trim_(bookRow[columns.STATUS]);
       const issuedTo = trim_(bookRow[columns.ISSUED_TO]);
       if (issuedTo || (status && status !== 'Available')) {
-        return { success: false, error: 'Sorry, this book is no longer available.' };
+        return {
+          success: false,
+          code: 'UNAVAILABLE',
+          error: 'Sorry, this book is no longer available.',
+          bookNo: trim_(bookNo),
+          status: issuedTo ? 'Issued' : (status || 'Reserved')
+        };
       }
 
       const now = new Date();
-      const normalizedBookNo = trim_(bookNo);
-      const bookName = trim_(bookRow[columns.BOOK_NAME]);
       const reservationId = createReservationId_();
 
       bookRow[columns.STATUS] = 'Reserved';
@@ -861,20 +871,23 @@ function reserveBook(bookNo, subscriberName, phone, notes) {
 }
 
 function reserveBookForCustomer(bookNo, customerToken) {
+  const __t0 = Date.now();
+  const __lap = (label) => Logger.log('[PERF reserveBookForCustomer] ' + label + ': +' + (Date.now() - __t0) + 'ms');
   try {
+    resetRequestCache_();
     if (!checkRateLimit_('customer-reserve-book', 8, 300)) {
       return { success: false, error: 'Too many reservation attempts. Please try again later.' };
     }
+    __lap('rateLimit');
 
     const sessionCustomer = verifyCustomerSession_(customerToken);
     if (!sessionCustomer) return { success: false, error: 'Please log in to reserve a book.' };
+    __lap('sessionVerify');
 
-    const lock = LockService.getScriptLock();
-    lock.waitLock(5000);
-    try {
-      const customerContext = getCustomerRowContextById_(sessionCustomer.customerId);
-      if (!customerContext) return { success: false, error: 'Customer account not found.' };
-      const customer = customerContext.customer;
+    // PERF: use the session-cached customer for the limit check — NO Customer-
+    // Details sheet open on the hot path. The session already carries
+    // accountStatus, monthlyReservationLimit and activeReservationCount.
+    const customer = sessionCustomer;
 
     if (trim_(customer.accountStatus).toLowerCase() !== 'active') {
       return { success: false, error: 'Your account is not active yet. Please contact the library admin.' };
@@ -885,61 +898,92 @@ function reserveBookForCustomer(bookNo, customerToken) {
       return { success: false, error: 'Monthly reservation limit is not set for your account. Please contact the library admin.' };
     }
 
-    let activeReservationCount = getCustomerActiveReservationCount_(customer, customerContext);
-    let activeReservations = null;
+    // PERF (Option A): the limit check reads the customer's reservation list
+    // straight from the session cache — NO Books-DB scan. Only a cold session
+    // (no cached list) triggers a one-time scan that then populates the cache.
+    //
+    // Correctness: this list is only a POLICY gate (how many books you may hold)
+    // and the modal display. It never guards a book's availability — that is
+    // enforced under the lock with a fresh read on every write.
+    const sessionReservations = getSessionReservations_(customerToken, sessionCustomer);
+    const activeReservationCount = sessionReservations.length;
+    __lap('limitCheck');
     if (activeReservationCount >= monthlyLimit) {
-      activeReservations = getActiveReservationsForCustomer_(customer.customerId);
-      if (activeReservations.length !== activeReservationCount) {
-        setCustomerActiveReservationCount_(customerContext, activeReservations.length);
-        activeReservationCount = activeReservations.length;
-      }
-    }
-    if (activeReservationCount >= monthlyLimit) {
+      // Served entirely from cache — the "unreserve one" list included.
+      __lap('LIMIT_REACHED_DONE (from session cache)');
       return {
         success: false,
         code: 'LIMIT_REACHED',
         error: 'You already have ' + activeReservationCount + ' active reservation(s). Please unreserve one before reserving another book.',
         monthlyLimit,
-        reservations: activeReservations || getActiveReservationsForCustomer_(customer.customerId)
+        activeReservationCount,
+        reservations: sessionReservations
       };
     }
 
-    const { sheet, headerRow, columns } = getSheetAndHeader_();
-    const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
-    const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
-    if (!bookRowNumber) return { success: false, error: 'Book not found.' };
+    const lock = LockService.getScriptLock();
+    lock.waitLock(5000);
+    __lap('lockAcquired');
+    try {
+      // PERF: locate the single book row with TextFinder (reads 1 row, not the
+      // whole ~2000-row sheet) and read just that row inside the lock.
+      const ctx = getSheetAndHeader_();
+      const sheet = ctx.sheet, headerRow = ctx.headerRow, columns = ctx.columns;
+      const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+      __lap('linkColumns');
 
-    const bookRow = getSheetRowValues_(sheet, bookRowNumber);
-    const now = new Date();
+      const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
+      if (!bookRowNumber) return { success: false, error: 'Book not found.' };
+      const bookRow = getSheetRowValues_(sheet, bookRowNumber);
+      __lap('bookRowRead');
 
-    const status = trim_(bookRow[columns.STATUS]);
-    const issuedTo = trim_(bookRow[columns.ISSUED_TO]);
-    if (issuedTo || (status && status !== 'Available')) {
-      return { success: false, error: 'Sorry, this book is no longer available.' };
-    }
+      const now = new Date();
+      const status = trim_(bookRow[columns.STATUS]);
+      const issuedTo = trim_(bookRow[columns.ISSUED_TO]);
+      if (issuedTo || (status && status !== 'Available')) {
+        return {
+          success: false,
+          code: 'UNAVAILABLE',
+          error: 'Sorry, this book is no longer available.',
+          bookNo: trim_(bookNo),
+          status: issuedTo ? 'Issued' : (status || 'Reserved')
+        };
+      }
 
-    const normalizedBookNo = trim_(bookNo);
-    const bookName = trim_(bookRow[columns.BOOK_NAME]);
-    const reservationId = createReservationId_();
+      const normalizedBookNo = trim_(bookNo);
+      const bookName = trim_(bookRow[columns.BOOK_NAME]);
+      const reservationId = createReservationId_();
 
-    bookRow[columns.STATUS] = 'Reserved';
-    bookRow[linkColumns.reservationId] = reservationId;
-    bookRow[linkColumns.reservedCustomerId] = customer.customerId;
-    bookRow[linkColumns.reservedCustomerName] = customer.name;
-    bookRow[linkColumns.reservedAt] = now;
-    bookRow[linkColumns.reservationUpdatedAt] = now;
-    setSheetRowValues_(sheet, bookRowNumber, bookRow);
-    adjustCustomerActiveReservationCount_(customerContext, 1);
+      bookRow[columns.STATUS] = 'Reserved';
+      bookRow[linkColumns.reservationId] = reservationId;
+      bookRow[linkColumns.reservedCustomerId] = customer.customerId;
+      bookRow[linkColumns.reservedCustomerName] = customer.name;
+      bookRow[linkColumns.reservedAt] = now;
+      bookRow[linkColumns.reservationUpdatedAt] = now;
+      setSheetRowValues_(sheet, bookRowNumber, bookRow);
+      __lap('rowWritten');
 
-    invalidatePublicBooksCache_();
-    return {
-      success: true,
-      message: '✅ Book reserved for ' + customer.name + '.',
-      reservationId,
-      bookNo: normalizedBookNo,
-      reservedCustomerId: customer.customerId,
-      status: 'Reserved'
-    };
+      // Option A: update the session reservation index only (keeps the count
+      // exact in-memory). We do NOT write the count to Customer-Details on the
+      // hot path — that ~700ms sheet-open is off the critical path now that the
+      // limit check reads from the session cache. The sheet column reconciles
+      // lazily via getMyReservations; a cold session rebuilds from a scan, not
+      // from that column, so a stale column is harmless.
+      addSessionReservation_(customerToken, sessionCustomer, {
+        reservationId, bookNo: normalizedBookNo, bookName
+      });
+      __lap('sessionUpdated');
+
+      invalidatePublicBooksCache_();
+      __lap('cacheInvalidated_DONE');
+      return {
+        success: true,
+        message: '✅ Book reserved for ' + customer.name + '.',
+        reservationId,
+        bookNo: normalizedBookNo,
+        reservedCustomerId: customer.customerId,
+        status: 'Reserved'
+      };
     } finally {
       lock.releaseLock();
     }
@@ -949,16 +993,25 @@ function reserveBookForCustomer(bookNo, customerToken) {
 }
 
 function getMyReservations(customerToken) {
+  const __t0 = Date.now();
+  const __lap = (label) => Logger.log('[PERF getMyReservations] ' + label + ': +' + (Date.now() - __t0) + 'ms');
   try {
+    resetRequestCache_();
     const sessionCustomer = verifyCustomerSession_(customerToken);
     if (!sessionCustomer) return { success: false, error: 'Please log in first.' };
-    const customerContext = getCustomerRowContextById_(sessionCustomer.customerId);
-    const customer = customerContext ? customerContext.customer : sessionCustomer;
-    const reservations = getActiveReservationsForCustomer_(customer.customerId);
-    if (customerContext) setCustomerActiveReservationCount_(customerContext, reservations.length);
+    __lap('sessionVerify');
+
+    // Option A reconcile point: this is the ONE place we do an authoritative
+    // Books-DB scan and refresh the session cache + durable count from truth.
+    const reservations = getActiveReservationsForCustomer_(sessionCustomer.customerId);
+    __lap('booksScan(' + reservations.length + ' reservations)');
+    setSessionReservations_(customerToken, sessionCustomer, reservations);
+    adjustCustomerActiveReservationCountByIdTo_(sessionCustomer.customerId, reservations.length);
+    __lap('countPersisted_DONE');
+
     return {
       success: true,
-      monthlyLimit: parseMonthlyReservationLimit_(customer),
+      monthlyLimit: parseMonthlyReservationLimit_(sessionCustomer),
       reservations
     };
   } catch (err) {
@@ -1015,52 +1068,66 @@ function debugMyReservationForBook(bookNo, customerToken) {
 }
 
 function unreserveMyBook(reservationId, customerToken, bookNo) {
+  const __t0 = Date.now();
+  const __lap = (label) => Logger.log('[PERF unreserveMyBook] ' + label + ': +' + (Date.now() - __t0) + 'ms');
   try {
+    resetRequestCache_();
     const sessionCustomer = verifyCustomerSession_(customerToken);
     if (!sessionCustomer) return { success: false, error: 'Please log in first.' };
     reservationId = trim_(reservationId);
     if (!reservationId) return { success: false, error: 'Reservation ID is required.' };
+    __lap('sessionVerify');
 
     const lock = LockService.getScriptLock();
     lock.waitLock(5000);
+    __lap('lockAcquired');
     try {
-      const { sheet, headerRow, columns } = getSheetAndHeader_();
+      // PERF: locate the single row with TextFinder (by bookNo when provided,
+      // else by reservationId) — reads 1 row, not the whole sheet.
+      const ctx = getSheetAndHeader_();
+      const sheet = ctx.sheet, headerRow = ctx.headerRow, columns = ctx.columns;
       const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+      __lap('linkColumns');
+
       const bookRowNumber = bookNo
         ? findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo)
         : findReservedBookRowByReservationId_(sheet, headerRow, linkColumns, reservationId);
       if (!bookRowNumber) return { success: false, error: 'Reservation not found.' };
 
-    const row = getSheetRowValues_(sheet, bookRowNumber);
-    const now = new Date();
-    const currentReservationId = trim_(row[linkColumns.reservationId]);
-    const reservedCustomerId = trim_(row[linkColumns.reservedCustomerId]);
+      const row = getSheetRowValues_(sheet, bookRowNumber);
+      __lap('bookRowRead');
+      const now = new Date();
+      const currentReservationId = trim_(row[linkColumns.reservationId]);
+      const reservedCustomerId = trim_(row[linkColumns.reservedCustomerId]);
 
-    if (currentReservationId !== reservationId) {
-      return { success: false, error: 'Reservation not found.' };
-    }
-    if (reservedCustomerId !== sessionCustomer.customerId) {
-      return { success: false, error: 'You can only unreserve your own books.' };
-    }
-    if (trim_(row[columns.STATUS]) !== 'Reserved') {
-      return { success: false, error: 'This reservation is no longer active.' };
-    }
+      if (currentReservationId !== reservationId) {
+        return { success: false, error: 'Reservation not found.' };
+      }
+      if (reservedCustomerId !== sessionCustomer.customerId) {
+        return { success: false, error: 'You can only unreserve your own books.' };
+      }
+      if (trim_(row[columns.STATUS]) !== 'Reserved') {
+        return { success: false, error: 'This reservation is no longer active.' };
+      }
 
-    const normalizedBookNo = trim_(row[columns.BOOK_NO]);
-    const bookName = trim_(row[columns.BOOK_NAME]);
-    row[columns.STATUS] = 'Available';
-    row[linkColumns.reservationId] = '';
-    row[linkColumns.reservedCustomerId] = '';
-    row[linkColumns.reservedCustomerName] = '';
-    row[linkColumns.reservedAt] = '';
-    row[linkColumns.reservationUpdatedAt] = now;
-    setSheetRowValues_(sheet, bookRowNumber, row);
+      const normalizedBookNo = trim_(row[columns.BOOK_NO]);
+      row[columns.STATUS] = 'Available';
+      row[linkColumns.reservationId] = '';
+      row[linkColumns.reservedCustomerId] = '';
+      row[linkColumns.reservedCustomerName] = '';
+      row[linkColumns.reservedAt] = '';
+      row[linkColumns.reservationUpdatedAt] = now;
+      setSheetRowValues_(sheet, bookRowNumber, row);
+      __lap('rowWritten');
 
-    const customerContext = getCustomerRowContextById_(sessionCustomer.customerId);
-    if (customerContext) adjustCustomerActiveReservationCount_(customerContext, -1);
+      // Option A: update the session reservation index only. No Customer-Details
+      // write on the hot path (see reserveBookForCustomer for the rationale).
+      removeSessionReservation_(customerToken, sessionCustomer, reservationId, normalizedBookNo);
+      __lap('sessionUpdated');
 
-    invalidatePublicBooksCache_();
-    return { success: true, message: 'Reservation cancelled.', bookNo: normalizedBookNo, reservationId };
+      invalidatePublicBooksCache_();
+      __lap('cacheInvalidated_DONE');
+      return { success: true, message: 'Reservation cancelled.', bookNo: normalizedBookNo, reservationId };
     } finally {
       lock.releaseLock();
     }
@@ -1601,7 +1668,9 @@ function canRunSetup_(adminCredential) {
 }
 
 function getCustomerDetailsSheetAndColumns_() {
-  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  if (REQUEST_CACHE_.customerDetails) return REQUEST_CACHE_.customerDetails;
+
+  const ss = getSpreadsheet_();
   const sheet = ss.getSheetByName(CONFIG.CUSTOMER_DETAILS_SHEET_NAME);
   if (!sheet) throw new Error('Sheet "' + CONFIG.CUSTOMER_DETAILS_SHEET_NAME + '" not found. Run setupCustomerReservationSystem() first.');
 
@@ -1610,7 +1679,8 @@ function getCustomerDetailsSheetAndColumns_() {
   if (headerRow === -1) throw new Error('Could not find header row in "' + CONFIG.CUSTOMER_DETAILS_SHEET_NAME + '".');
 
   const headerMap = getHeaderMap_(data[headerRow]);
-  return { sheet, headerRow, columns: buildCustomerAuthColumns_(headerMap) };
+  REQUEST_CACHE_.customerDetails = { sheet, headerRow, columns: buildCustomerAuthColumns_(headerMap) };
+  return REQUEST_CACHE_.customerDetails;
 }
 
 function buildCustomerAuthColumns_(headerMap) {
@@ -1785,6 +1855,134 @@ function setCustomerActiveReservationCount_(context, count) {
   context.rowInfo.values[countColumn] = next;
 }
 
+/**
+ * PERF: adjust a customer's Active Reservation Count by delta using a targeted
+ * TextFinder lookup of just that customer's row (no full-sheet read). Returns
+ * the new count, or null if the count column / row can't be resolved.
+ */
+function adjustCustomerActiveReservationCountById_(customerId, delta) {
+  const details = getCustomerDetailsSheetAndColumns_();
+  const countColumn = details.columns.activeReservationCount;
+  if (countColumn === -1) return null;
+
+  const rowNumber = findDataRowByExactValue_(details.sheet, details.headerRow, details.columns.customerId, customerId);
+  if (!rowNumber) return null;
+
+  const cell = details.sheet.getRange(rowNumber, countColumn + 1);
+  const current = parseInt(cell.getValue(), 10) || 0;
+  const next = Math.max(0, current + delta);
+  cell.setValue(next);
+  return next;
+}
+
+/**
+ * Set a customer's Active Reservation Count to an absolute value via a targeted
+ * TextFinder lookup (used by the reconcile path). Returns the value written, or
+ * null if the column/row can't be resolved.
+ */
+function adjustCustomerActiveReservationCountByIdTo_(customerId, count) {
+  const details = getCustomerDetailsSheetAndColumns_();
+  const countColumn = details.columns.activeReservationCount;
+  if (countColumn === -1) return null;
+
+  const rowNumber = findDataRowByExactValue_(details.sheet, details.headerRow, details.columns.customerId, customerId);
+  if (!rowNumber) return null;
+
+  const next = Math.max(0, parseInt(count, 10) || 0);
+  details.sheet.getRange(rowNumber, countColumn + 1).setValue(next);
+  return next;
+}
+
+/**
+ * PERF: rewrite the customer session cache with a refreshed active count so the
+ * next reserve can trust it without re-opening Customer-Details. Mutates the
+ * passed sessionCustomer object too so this request sees the new value.
+ */
+function updateSessionActiveCount_(token, sessionCustomer, count) {
+  if (!token || !sessionCustomer) return;
+  const next = Math.max(0, parseInt(count, 10) || 0);
+  sessionCustomer.activeReservationCount = next;
+  persistSession_(token, sessionCustomer);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Option A — per-customer reservation index cached in the session
+//
+// sessionCustomer.reservations is the authoritative in-session list of the
+// customer's ACTIVE reservations: [{ reservationId, bookNo, bookName }].
+// activeReservationCount is always kept equal to reservations.length.
+//
+// This is a POLICY/display cache only. It never governs a book's availability —
+// that is enforced under the lock with a fresh Books-DB read on every write.
+// If the cache is ever missing (cold session), we scan Books-DB ONCE to build
+// it, then all subsequent reads are cache hits (~5 ms, zero sheet access).
+// ─────────────────────────────────────────────────────────────
+
+function persistSession_(token, sessionCustomer) {
+  if (!token || !sessionCustomer) return;
+  try {
+    CacheService.getScriptCache().put(customerSessionKey_(token), JSON.stringify(sessionCustomer), CUSTOMER_SESSION_SECS);
+  } catch (e) { /* non-fatal: next read will re-scan and re-cache */ }
+}
+
+/**
+ * Returns the customer's active reservations from the session cache when
+ * present; otherwise scans Books-DB ONCE, caches the result in the session, and
+ * returns it. Also keeps activeReservationCount in sync.
+ */
+function getSessionReservations_(token, sessionCustomer) {
+  if (sessionCustomer && Array.isArray(sessionCustomer.reservations)) {
+    return sessionCustomer.reservations;
+  }
+  const list = getActiveReservationsForCustomer_(sessionCustomer.customerId).map(r => ({
+    reservationId: r.reservationId,
+    bookNo: r.bookNo,
+    bookName: r.bookName
+  }));
+  setSessionReservations_(token, sessionCustomer, list);
+  return list;
+}
+
+/** Replace the whole cached reservation list (e.g. after a reconciling scan). */
+function setSessionReservations_(token, sessionCustomer, list) {
+  if (!sessionCustomer) return;
+  const clean = (list || []).map(r => ({
+    reservationId: trim_(r.reservationId),
+    bookNo: trim_(r.bookNo),
+    bookName: trim_(r.bookName)
+  }));
+  sessionCustomer.reservations = clean;
+  sessionCustomer.activeReservationCount = clean.length;
+  persistSession_(token, sessionCustomer);
+}
+
+/** Add one reservation to the cached list (no-op if bookNo already present). */
+function addSessionReservation_(token, sessionCustomer, reservation) {
+  const list = getSessionReservations_(token, sessionCustomer).slice();
+  const key = trim_(reservation.bookNo);
+  if (!list.some(r => trim_(r.bookNo) === key)) {
+    list.push({
+      reservationId: trim_(reservation.reservationId),
+      bookNo: key,
+      bookName: trim_(reservation.bookName)
+    });
+  }
+  setSessionReservations_(token, sessionCustomer, list);
+  return list;
+}
+
+/** Remove one reservation from the cached list, matched by reservationId or bookNo. */
+function removeSessionReservation_(token, sessionCustomer, reservationId, bookNo) {
+  const list = getSessionReservations_(token, sessionCustomer);
+  const rid = trim_(reservationId);
+  const bno = trim_(bookNo);
+  const next = list.filter(r =>
+    !((rid && trim_(r.reservationId) === rid) || (bno && trim_(r.bookNo) === bno))
+  );
+  setSessionReservations_(token, sessionCustomer, next);
+  return next;
+}
+
 function parseMonthlyReservationLimit_(customer) {
   const explicitLimit = parseInt(customer.monthlyReservationLimit, 10);
   if (explicitLimit > 0) return explicitLimit;
@@ -1821,15 +2019,17 @@ function getHeaderSearchValues_(sheet) {
 }
 
 function getActiveReservationsForCustomer_(customerId) {
-  const { sheet, headerRow, columns } = getSheetAndHeader_();
-  const linkColumns = getExistingBookReservationLinkColumns_(sheet, headerRow);
+  // PERF: reuse the single request-scoped read of Books-DB instead of
+  // re-opening the spreadsheet and doing another full getDisplayValues scan.
+  const master = getMasterData_();
+  const { headerRow, columns, linkColumns, values } = master;
   if (linkColumns.reservedCustomerId === -1 || linkColumns.reservationId === -1) return [];
 
-  const data = sheet.getDataRange().getDisplayValues();
+  const tz = Session.getScriptTimeZone();
   const reservations = [];
 
-  for (let i = headerRow + 1; i < data.length; i++) {
-    const row = data[i];
+  for (let i = headerRow + 1; i < values.length; i++) {
+    const row = values[i];
     if (trim_(row[linkColumns.reservedCustomerId]) !== customerId) continue;
     if (trim_(row[columns.STATUS]) !== 'Reserved') continue;
 
@@ -1837,7 +2037,7 @@ function getActiveReservationsForCustomer_(customerId) {
       reservationId: trim_(row[linkColumns.reservationId]),
       bookNo: trim_(row[columns.BOOK_NO]),
       bookName: trim_(row[columns.BOOK_NAME]),
-      reservedAt: linkColumns.reservedAt === -1 ? '' : trim_(row[linkColumns.reservedAt]),
+      reservedAt: linkColumns.reservedAt === -1 ? '' : formatDate_(row[linkColumns.reservedAt], tz),
       status: trim_(row[columns.STATUS])
     });
   }
@@ -1881,6 +2081,22 @@ function getBookReservationLinkColumns_(sheet, headerRow) {
   };
 }
 
+/**
+ * PERF helper: ensures the reservation link columns exist on Books-DB (creating
+ * them once if a legacy sheet is missing them), then clears the cached master
+ * read so the next getMasterData_() reflects any newly added columns. In a
+ * normal setup the columns already exist and this is a no-op after the header
+ * read. Must be called inside the reservation lock when a write will follow.
+ */
+function ensureMasterLinkColumns_() {
+  const ctx = getSheetAndHeader_();
+  const linkColumns = getBookReservationLinkColumns_(ctx.sheet, ctx.headerRow);
+  if (linkColumns.added) {
+    REQUEST_CACHE_.masterData = null;
+    REQUEST_CACHE_.masterSheet = null;
+  }
+}
+
 function getExistingBookReservationLinkColumns_(sheet, headerRow) {
   const headerValues = sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0];
   const headerMap = getHeaderMap_(headerValues);
@@ -1914,6 +2130,15 @@ function clearBookReservationLink_(bookNo, reservationId) {
 function findReservedBookRowByReservationId_(sheet, headerRow, linkColumns, reservationId) {
   const rowNumber = findDataRowByExactValue_(sheet, headerRow, linkColumns.reservationId, reservationId);
   return rowNumber || null;
+}
+
+/**
+ * PERF: locate a row by reservation id within an already-loaded values array.
+ * Returns the 0-based array index, or -1 when not found.
+ */
+function findReservedRowIndexByReservationId_(values, headerRow, linkColumns, reservationId) {
+  if (linkColumns.reservationId === -1) return -1;
+  return findRowIndexInValues_(values, headerRow, linkColumns.reservationId, reservationId);
 }
 
 function ensureBooksReservationOwnerColumn_(ss) {
@@ -2220,8 +2445,30 @@ function normalizeCustomerNameKey_(name) {
   return normalizeHeader_(name);
 }
 
+// ─────────────────────────────────────────────────────────────
+// Request-scoped cache (PERF)
+// Apps Script runs each web-app call as a single, isolated execution,
+// so module-level state lives for exactly one request and resets on the
+// next. We use it to open the spreadsheet ONCE and resolve header/column
+// layouts ONCE per request instead of on every helper call.
+// ─────────────────────────────────────────────────────────────
+var REQUEST_CACHE_ = {};
+
+function resetRequestCache_() {
+  REQUEST_CACHE_ = {};
+}
+
+function getSpreadsheet_() {
+  if (!REQUEST_CACHE_.spreadsheet) {
+    REQUEST_CACHE_.spreadsheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  }
+  return REQUEST_CACHE_.spreadsheet;
+}
+
 function getSheetAndHeader_() {
-  const ss    = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  if (REQUEST_CACHE_.masterSheet) return REQUEST_CACHE_.masterSheet;
+
+  const ss    = getSpreadsheet_();
   const sheet = ss.getSheetByName(CONFIG.MASTER_SHEET_NAME);
   if (!sheet) throw new Error('Sheet "' + CONFIG.MASTER_SHEET_NAME + '" not found.');
 
@@ -2234,7 +2481,54 @@ function getSheetAndHeader_() {
 
   const columns = getMasterColumnMap_(data[headerRow]);
 
-  return { sheet, headerRow, columns };
+  REQUEST_CACHE_.masterSheet = { sheet, headerRow, columns };
+  return REQUEST_CACHE_.masterSheet;
+}
+
+/**
+ * Reads the full Books-DB data range ONCE per request (raw values) and caches
+ * it. Callers that need to find/mutate a book row should use this instead of
+ * separate getLastRow + TextFinder + getRange reads. Returns { headerRow,
+ * columns, linkColumns, values } where values is the full 2-D array.
+ */
+function getMasterData_() {
+  if (REQUEST_CACHE_.masterData) return REQUEST_CACHE_.masterData;
+
+  const __t = Date.now();
+  const ctx = getSheetAndHeader_();
+  const linkColumns = getExistingBookReservationLinkColumns_(ctx.sheet, ctx.headerRow);
+  const values = ctx.sheet.getDataRange().getValues();
+  Logger.log('[PERF getMasterData_] full read of ' + values.length + ' rows: ' + (Date.now() - __t) + 'ms');
+
+  REQUEST_CACHE_.masterData = {
+    sheet: ctx.sheet,
+    headerRow: ctx.headerRow,
+    columns: ctx.columns,
+    linkColumns,
+    values
+  };
+  return REQUEST_CACHE_.masterData;
+}
+
+/**
+ * Finds the 0-based index within a loaded values array whose column matches the
+ * given value exactly (after trim). Returns -1 when not found.
+ */
+function findRowIndexInValues_(values, headerRow, columnIndex, value) {
+  const needle = trim_(value);
+  for (let i = headerRow + 1; i < values.length; i++) {
+    if (trim_(values[i][columnIndex]) === needle) return i;
+  }
+  return -1;
+}
+
+/**
+ * Writes a single row (given by its 0-based array index) back to the sheet from
+ * an in-memory values array. One setValues round-trip.
+ */
+function writeMasterRow_(master, rowArrayIndex) {
+  const width = master.values[rowArrayIndex].length;
+  master.sheet.getRange(rowArrayIndex + 1, 1, 1, width).setValues([master.values[rowArrayIndex].slice(0, width)]);
 }
 
 function rowHasMasterHeaders_(row) {

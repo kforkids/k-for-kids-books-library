@@ -188,6 +188,24 @@
     font-size: 2.5rem; color: #bbb; flex-shrink: 0;
   }
 
+  /* ── Reservation list thumbnail (limit modal) ── */
+  .reservation-thumb {
+    width: 40px;
+    height: 54px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  }
+  .reservation-thumb-placeholder {
+    background: #f0f4f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #bbb;
+    font-size: 1.1rem;
+  }
+
   .status-pill {
     display: inline-block;
     padding: 3px 12px;
@@ -740,6 +758,12 @@ let currentCustomer = null;
 let searchTimer  = null;
 let filters      = { language: '', ageGroup: '', status: '', search: '', withImage: false };
 let imageWarmupAttempted = false;
+// PERF: cache the logged-in customer's active reservations for the session so
+// opening a reserved book's detail modal doesn't fire a full-sheet server scan
+// (getMyReservations) every single time. Invalidated on reserve/unreserve.
+let myReservationsCache = null;
+// Guard so a stale-high server count triggers at most ONE auto-retry, never a loop.
+let limitRetryDone = false;
 
 const bookModal    = new bootstrap.Modal('#bookModal');
 const reserveModal = new bootstrap.Modal('#reserveModal');
@@ -1043,24 +1067,39 @@ function openBookDetail(bookNo) {
 function hydrateMyReservationAction(book) {
   if (!currentCustomer || !customerToken || book.status !== 'Reserved' || book.isMyReservation) return;
 
+  // PERF: reuse the cached reservation list when we already have it this
+  // session, instead of calling getMyReservations (a full Books-DB scan) on
+  // every reserved-book modal open.
+  if (Array.isArray(myReservationsCache)) {
+    applyMyReservationToModal_(book, myReservationsCache);
+    return;
+  }
+
+  const __t0 = Date.now(); // PERF: getMyReservations round-trip on modal open
   google.script.run
     .withSuccessHandler(res => {
+      console.log('[PERF] getMyReservations round-trip: ' + (Date.now() - __t0) + 'ms');
       if (!res || !res.success || !Array.isArray(res.reservations)) return;
-      const reservation = res.reservations.find(r => reservationBookKey(r.bookNo) === reservationBookKey(book.bookNo));
-      if (!reservation) return;
-
-      book.isMyReservation = true;
-      book.reservationId = reservation.reservationId;
-      activeBook = book;
-
-      const footer = document.getElementById('modalFooter');
-      if (!footer || document.getElementById('myUnreserveBtn')) return;
-      footer.insertAdjacentHTML('beforeend', `<button class="btn btn-outline-danger" id="myUnreserveBtn" onclick="unreserveMyActiveBook('${escAttr(reservation.reservationId)}')">
-        <i class="bi bi-x-circle me-1"></i>Unreserve
-      </button>`);
+      myReservationsCache = res.reservations;
+      applyMyReservationToModal_(book, res.reservations);
     })
     .withFailureHandler(() => {})
     .getMyReservations(customerToken);
+}
+
+function applyMyReservationToModal_(book, reservations) {
+  const reservation = reservations.find(r => reservationBookKey(r.bookNo) === reservationBookKey(book.bookNo));
+  if (!reservation) return;
+
+  book.isMyReservation = true;
+  book.reservationId = reservation.reservationId;
+  activeBook = book;
+
+  const footer = document.getElementById('modalFooter');
+  if (!footer || document.getElementById('myUnreserveBtn')) return;
+  footer.insertAdjacentHTML('beforeend', `<button class="btn btn-outline-danger" id="myUnreserveBtn" onclick="unreserveMyActiveBook('${escAttr(reservation.reservationId)}')">
+    <i class="bi bi-x-circle me-1"></i>Unreserve
+  </button>`);
 }
 
 function buildAdminSection(book) {
@@ -1127,6 +1166,10 @@ function submitReservation() {
           reservedCustomerId: '',
           isMyReservation: false
         });
+      } else if (res.code === 'UNAVAILABLE') {
+        // Someone else reserved/issued this book first — sync the UI to reality.
+        showToast(res.error || 'Sorry, this book is no longer available.', 'danger');
+        refreshBook(res.bookNo || activeBook.bookNo, res.status || 'Reserved', '', '', '');
       } else {
         showToast(res.error || 'Reservation failed.', 'danger');
       }
@@ -1140,10 +1183,14 @@ function submitReservation() {
 
 function reserveLoggedInCustomer(bookNo) {
   const btn = document.getElementById('bookReserveBtn');
+  myReservationsCache = null; // PERF: reservations change; force a fresh fetch next time
   setInlineButtonLoading(btn, true, 'Reserving…');
+  const __t0 = Date.now(); // PERF: total round-trip incl. google.script.run overhead
   google.script.run
     .withSuccessHandler(res => {
+      console.log('[PERF] reserve round-trip: ' + (Date.now() - __t0) + 'ms');
       if (res.success) {
+        limitRetryDone = false;
         showToast(res.message || 'Book reserved.', 'success');
         refreshBook(bookNo, 'Reserved', '', '', '', '', {
           reservationId: res.reservationId || '',
@@ -1154,7 +1201,35 @@ function reserveLoggedInCustomer(bookNo) {
         bookModal.hide();
       } else if (res.code === 'LIMIT_REACHED') {
         setInlineButtonLoading(btn, false);
-        showReservationLimitModal(res);
+        // Cross-check the server's cached count against what the browser
+        // actually shows for this customer. If the server over-counted (stale
+        // cache) and we're really under the limit, correct the server once and
+        // retry — no false rejection.
+        const myReservations = getMyReservationsFromLoadedBooks();
+        const limit = res.monthlyLimit || 0;
+        if (!limitRetryDone && myReservations.length < limit) {
+          // Server's cached count was stale-high. Fix it, THEN retry (chained so
+          // the retry runs after the count is corrected, not before).
+          limitRetryDone = true;
+          setInlineButtonLoading(btn, true, 'Reserving…');
+          myReservationsCache = null;
+          google.script.run
+            .withSuccessHandler(() => reserveLoggedInCustomer(bookNo))
+            .withFailureHandler(() => {
+              setInlineButtonLoading(btn, false);
+              showReservationLimitModal(res, myReservations);
+            })
+            .getMyReservations(customerToken);
+          return;
+        }
+        limitRetryDone = false;
+        showReservationLimitModal(res, myReservations);
+      } else if (res.code === 'UNAVAILABLE') {
+        // Someone else reserved/issued this book first — sync the UI to reality.
+        setInlineButtonLoading(btn, false);
+        showToast(res.error || 'Sorry, this book is no longer available.', 'danger');
+        refreshBook(res.bookNo || bookNo, res.status || 'Reserved', '', '', '');
+        bookModal.hide();
       } else {
         setInlineButtonLoading(btn, false);
         showToast(res.error || 'Reservation failed.', 'danger');
@@ -1167,9 +1242,38 @@ function reserveLoggedInCustomer(bookNo) {
     .reserveBookForCustomer(bookNo, customerToken);
 }
 
-function showReservationLimitModal(res) {
+// Derive the logged-in customer's active reservations from the already-loaded
+// book list — no server round-trip. Books carry isMyReservation + reservationId
+// for the current customer (set by getBooks on the server).
+function getMyReservationsFromLoadedBooks() {
+  return allBooks
+    .filter(b => b.status === 'Reserved' && b.isMyReservation)
+    .map(b => ({
+      reservationId: b.reservationId || '',
+      bookNo: b.bookNo,
+      bookName: b.bookName,
+      reservedAt: '',
+      status: 'Reserved'
+    }));
+}
+
+function reservationThumbHtml(r) {
+  // Resolve the cover from the already-loaded full book list by book number.
+  const book = allBooks.find(b => b.bookNo === r.bookNo);
+  const imageUrl = (book && book.imageUrl) || r.imageUrl || '';
+  if (imageUrl) {
+    return `<img src="${escAttr(imageUrl)}" alt="" class="reservation-thumb"
+      onerror="this.outerHTML='<div class=\\'reservation-thumb reservation-thumb-placeholder\\'><i class=\\'bi bi-book\\'></i></div>'">`;
+  }
+  return `<div class="reservation-thumb reservation-thumb-placeholder"><i class="bi bi-book"></i></div>`;
+}
+
+function showReservationLimitModal(res, clientReservations) {
   const limit = res.monthlyLimit || 0;
-  const reservations = res.reservations || [];
+  // Prefer the client-built list (no server scan). Fall back to any server list.
+  const reservations = (clientReservations && clientReservations.length)
+    ? clientReservations
+    : (res.reservations || getMyReservationsFromLoadedBooks());
   const pendingBook = allBooks.find(book => book.bookNo === pendingReserveBookNo) || activeBook || {};
   const pendingBookLabel = [
     pendingBook.bookNo,
@@ -1181,9 +1285,12 @@ function showReservationLimitModal(res) {
 
   document.getElementById('limitReservationsList').innerHTML = reservations.length
     ? reservations.map(r => `<div class="border rounded p-2 mb-2 d-flex justify-content-between gap-2 align-items-center">
-        <div>
-          <div><b>${escHtml(r.bookName || r.bookNo)}</b></div>
-          <small class="text-muted">${escHtml(r.bookNo)}${r.reservedAt ? ' · Reserved ' + escHtml(r.reservedAt) : ''}</small>
+        <div class="d-flex gap-2 align-items-center">
+          ${reservationThumbHtml(r)}
+          <div>
+            <div><b>${escHtml(r.bookName || r.bookNo)}</b></div>
+            <small class="text-muted">${escHtml(r.bookNo)}${r.reservedAt ? ' · Reserved ' + escHtml(r.reservedAt) : ''}</small>
+          </div>
         </div>
         <button class="btn btn-sm btn-outline-danger" id="limitUnreserve_${escAttr(r.reservationId)}" onclick="unreserveThenRetry('${escAttr(r.reservationId)}', '${escAttr(r.bookNo)}')">
           Unreserve
@@ -1197,9 +1304,12 @@ function showReservationLimitModal(res) {
 function unreserveThenRetry(reservationId, bookNo) {
   if (!reservationId || !pendingReserveBookNo) return;
   const btn = document.getElementById('limitUnreserve_' + reservationId);
+  myReservationsCache = null; // PERF: reservations change; force a fresh fetch next time
   setInlineButtonLoading(btn, true, 'Unreserving…');
+  const __t0 = Date.now(); // PERF: total unreserve round-trip (from limit modal)
   google.script.run
     .withSuccessHandler(res => {
+      console.log('[PERF] unreserve(fromLimit) round-trip: ' + (Date.now() - __t0) + 'ms');
       if (res.success) {
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
         limitModal.hide();
@@ -1219,10 +1329,13 @@ function unreserveThenRetry(reservationId, bookNo) {
 function unreserveMyActiveBook(reservationId) {
   if (!reservationId) return;
   const btn = document.getElementById('myUnreserveBtn');
+  myReservationsCache = null; // PERF: reservations change; force a fresh fetch next time
   setInlineButtonLoading(btn, true, 'Unreserving…');
 
+  const __t0 = Date.now(); // PERF: total unreserve round-trip
   google.script.run
     .withSuccessHandler(res => {
+      console.log('[PERF] unreserve round-trip: ' + (Date.now() - __t0) + 'ms');
       if (res.success) {
         showToast(res.message || 'Reservation cancelled.', 'success');
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
@@ -1462,6 +1575,7 @@ function logoutCustomer() {
 function clearCustomerSession() {
   customerToken = '';
   currentCustomer = null;
+  myReservationsCache = null; // PERF: don't carry one customer's reservations to another session
   localStorage.removeItem('kfkCustomerToken');
   renderCustomerState();
 }
