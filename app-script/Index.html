@@ -66,6 +66,20 @@
   .filter-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
   .filter-label { font-size: .78rem; color: #666; margin-right: 4px; }
 
+  /* ── Collapsible filters ── */
+  .filter-bar.filters-collapsed { display: none; }
+  #filterToggleBtn { position: relative; white-space: nowrap; }
+  #filterToggleBtn.has-active { border-color: var(--brand); color: var(--brand); }
+  .active-filter-dot {
+    position: absolute; top: 4px; right: 4px;
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent);
+  }
+  /* On phones the label is hidden to save room; the icon + dot remain. */
+  @media (max-width: 480px) {
+    .filter-toggle-label { display: none; }
+  }
+
   /* ── Stats row ── */
   .stats-bar {
     background: var(--brand-lt);
@@ -488,6 +502,10 @@
              oninput="debouncedSearch()">
       <button class="btn btn-outline-secondary" onclick="clearSearch()" title="Clear">
         <i class="bi bi-x"></i>
+      </button>
+      <button class="btn btn-outline-secondary" id="filterToggleBtn" onclick="toggleFilters()" title="Filters">
+        <i class="bi bi-sliders"></i><span class="filter-toggle-label ms-1">Filters</span>
+        <span id="activeFilterDot" class="active-filter-dot" style="display:none"></span>
       </button>
     </div>
   </div>
@@ -914,6 +932,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }, { rootMargin: '200px' });
   observer.observe(sentinel);
 
+  // Collapse the filter bar by default on phones (it takes too much vertical
+  // space); leave it open on larger screens where there's room.
+  if (window.matchMedia('(max-width: 480px)').matches) {
+    document.getElementById('filterBarEl').classList.add('filters-collapsed');
+  }
+
   // Action-banner dismiss button (listener is more reliable than inline onclick).
   const bannerClose = document.getElementById('actionBannerClose');
   if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
@@ -969,6 +993,22 @@ function applyFilters() {
 
   renderGrid();
   updateStats();
+  updateFilterIndicator_();
+}
+
+// Show/hide the filter bar (collapsed by default on mobile to save vertical space).
+function toggleFilters() {
+  document.getElementById('filterBarEl').classList.toggle('filters-collapsed');
+}
+
+// Reflect whether any non-default filter is active on the toggle button (dot +
+// highlight), so users know filters are applied even while collapsed.
+function updateFilterIndicator_() {
+  const active = Boolean(filters.language || filters.ageGroup || filters.status || filters.withImage);
+  const btn = document.getElementById('filterToggleBtn');
+  const dot = document.getElementById('activeFilterDot');
+  if (btn) btn.classList.toggle('has-active', active);
+  if (dot) dot.style.display = active ? '' : 'none';
 }
 
 function debouncedSearch() {
