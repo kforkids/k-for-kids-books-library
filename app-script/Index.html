@@ -381,7 +381,9 @@
   }
   .action-banner .ab-close:hover { background: rgba(255,255,255,.4); }
   .action-banner .ab-close > * { pointer-events: none; }
-  .action-banner.ab-success { background: #2e7d32; }
+  /* Lighter green than the header (--brand #2e7d32) so a success message reads
+     clearly and doesn't blend into the header. Matches the "Available" badge. */
+  .action-banner.ab-success { background: #43a047; border-top: 2px solid rgba(255,255,255,.55); }
   .action-banner.ab-danger  { background: #c62828; }
   /* Light yellow while an action is in progress — dark amber text for contrast. */
   .action-banner.ab-pending { background: #fff3cd; color: #664d03; }
@@ -2164,7 +2166,7 @@ function _setLoadingPct(pct) {
 
 function showToast(msg, type) {
   const el = document.getElementById('appToast');
-  const colors = { success: '#2e7d32', danger: '#c62828', warning: '#e65100', secondary: '#555' };
+  const colors = { success: '#43a047', danger: '#c62828', warning: '#e65100', secondary: '#555' };
   el.style.background = colors[type] || '#333';
   document.getElementById('toastMsg').textContent = msg;
   bootstrap.Toast.getOrCreateInstance(el, { delay: 3500 }).show();
