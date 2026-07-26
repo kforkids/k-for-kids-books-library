@@ -1951,7 +1951,7 @@ function showToast(msg, type) {
 // confirmations aren't missed while scrolling.
 //   type: 'pending' (spinner, stays until updated) | 'success' | 'danger'
 //   autoHideMs: 0 keeps it up (use for 'pending'); default 5000 for terminal states.
-const BANNER_AUTO_HIDE_MS = 5000; // success/error banners auto-close after 5s
+const BANNER_AUTO_HIDE_MS = 4000; // success/error banners auto-close after 4s
 let _bannerTimer = null;
 function showBanner(msg, type, autoHideMs) {
   const banner = document.getElementById('actionBanner');
