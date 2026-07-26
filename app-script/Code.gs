@@ -833,7 +833,7 @@ function reserveBook(bookNo, subscriberName, phone, notes) {
   try {
     resetRequestCache_();
     if (!checkRateLimit_('reserve-book', 5, 300)) {
-      return { success: false, error: 'Too many reservation attempts. Please try again later.' };
+      return { success: false, error: rateLimitMessage_('Too many reservation attempts.') };
     }
     if (!bookNo || !subscriberName) return { success: false, error: 'Book number and your name are required.' };
 
@@ -897,7 +897,7 @@ function reserveBookForCustomer(bookNo, customerToken) {
   try {
     resetRequestCache_();
     if (!checkRateLimit_('customer-reserve-book', 8, 300)) {
-      return { success: false, error: 'Too many reservation attempts. Please try again later.' };
+      return { success: false, error: rateLimitMessage_('Too many reservation attempts.') };
     }
     __lap('rateLimit');
 
@@ -1359,7 +1359,7 @@ function repairStaleReservationLinks() {
 function claimExistingCustomer(customerId, inviteCode, email, password, phone) {
   try {
     if (!checkRateLimit_('customer-claim', 8, 300)) {
-      return { success: false, error: 'Too many claim attempts. Please try again later.' };
+      return { success: false, error: rateLimitMessage_('Too many attempts to join.') };
     }
 
     customerId = trim_(customerId).toUpperCase();
@@ -1421,7 +1421,7 @@ function claimExistingCustomer(customerId, inviteCode, email, password, phone) {
 function loginCustomer(identifier, password) {
   try {
     if (!checkRateLimit_('customer-login', 10, 300)) {
-      return { success: false, error: 'Too many login attempts. Please try again later.' };
+      return { success: false, error: rateLimitMessage_('Too many login attempts.') };
     }
 
     const loginId = trim_(identifier);
@@ -1778,7 +1778,7 @@ function logReturnToCustTab_(customerName, bookNo, returnDate) {
 function loginAdmin(password) {
   try {
     if (!checkRateLimit_('admin-login', 10, 300)) {
-      return { success: false, error: 'Too many login attempts. Please try again later.' };
+      return { success: false, error: rateLimitMessage_('Too many login attempts.') };
     }
     if (!verifyAdmin_(password)) return { success: false, error: 'Incorrect admin password.' };
 
@@ -1805,7 +1805,7 @@ function verifyAdminPassword(password) {
 }
 
 function changeAdminPassword(currentPassword, newPassword) {
-  if (!checkRateLimit_('admin-password-change', 5, 300)) return { success: false, error: 'Too many attempts. Please try again later.' };
+  if (!checkRateLimit_('admin-password-change', 5, 300)) return { success: false, error: rateLimitMessage_('Too many attempts.') };
   if (!verifyAdmin_(currentPassword))     return { success: false, error: 'Current password incorrect.' };
   if (!newPassword || newPassword.length < 6) return { success: false, error: 'New password must be at least 6 characters.' };
   PropertiesService.getScriptProperties().setProperty('ADMIN_PASSWORD', newPassword);
@@ -2872,13 +2872,55 @@ function adminSessionKey_(token) {
   return 'ADMIN_SESSION_' + String(token || '').replace(/[^a-zA-Z0-9-]/g, '').slice(0, 100);
 }
 
+/**
+ * Sliding-window rate limit. Backward compatible: returns a boolean that is
+ * truthy when the caller may proceed. When blocked it returns `false`, and the
+ * seconds-until-retry are stashed on `checkRateLimit_.lastRetryAfter` so callers
+ * can build a precise "try again in N" message (see rateLimitMessage_).
+ *
+ * We store the window START time with the count so we can compute how long is
+ * left in the window (CacheService doesn't expose TTL).
+ */
 function checkRateLimit_(scope, maxAttempts, windowSeconds) {
   const cache = CacheService.getScriptCache();
   const key   = 'RATE_' + scope + '_' + callerKey_();
-  const count = parseInt(cache.get(key) || '0', 10);
-  if (count >= maxAttempts) return false;
-  cache.put(key, String(count + 1), windowSeconds);
+  const now   = Date.now();
+
+  let count = 0;
+  let windowStart = now;
+  const raw = cache.get(key);
+  if (raw) {
+    const parts = raw.split('|'); // "count|windowStartMillis"
+    count = parseInt(parts[0], 10) || 0;
+    windowStart = parseInt(parts[1], 10) || now;
+  }
+
+  const elapsedSec = Math.floor((now - windowStart) / 1000);
+  const remainingSec = Math.max(0, windowSeconds - elapsedSec);
+
+  if (count >= maxAttempts) {
+    checkRateLimit_.lastRetryAfter = remainingSec > 0 ? remainingSec : windowSeconds;
+    return false;
+  }
+
+  // Preserve the original window start (so the counter expires as one window),
+  // and re-put with the remaining TTL so cache eviction matches the window.
+  cache.put(key, (count + 1) + '|' + windowStart, remainingSec > 0 ? remainingSec : windowSeconds);
+  checkRateLimit_.lastRetryAfter = 0;
   return true;
+}
+
+// Human-friendly "try again in …" text from the last rate-limit block.
+function rateLimitMessage_(prefix) {
+  const secs = Math.max(1, parseInt(checkRateLimit_.lastRetryAfter, 10) || 0);
+  let when;
+  if (secs < 60) {
+    when = 'in ' + secs + ' second' + (secs === 1 ? '' : 's');
+  } else {
+    const mins = Math.ceil(secs / 60);
+    when = 'in about ' + mins + ' minute' + (mins === 1 ? '' : 's');
+  }
+  return (prefix || 'Too many attempts.') + ' Please try again ' + when + '.';
 }
 
 function callerKey_() {
