@@ -735,6 +735,10 @@ function getBooks(filters, adminCredential, customerToken) {
     const visibilityColumn = getBookVisibilityColumn_(sheet, headerRow);
     const range    = sheet.getDataRange();
     const displayData = range.getDisplayValues();
+    // Raw values for the reservation timestamps — needed so we can format them
+    // with time (to the second), not just the sheet's date-only cell display.
+    const rawData  = isAdmin ? range.getValues() : null;
+    const tz       = Session.getScriptTimeZone();
     // Build the image map if the cache is cold so the FIRST getBooks already
     // returns image URLs — avoids the "load once without images, reload with
     // images" flash. The Drive scan only runs on a cold cache (30-min TTL);
@@ -761,8 +765,11 @@ function getBooks(filters, adminCredential, customerToken) {
       const reservationId = linkColumns.reservationId === -1 ? '' : trim_(displayRow[linkColumns.reservationId]);
       const reservedCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(displayRow[linkColumns.reservedCustomerId]);
       const reservedCustomerName = linkColumns.reservedCustomerName === -1 ? '' : trim_(displayRow[linkColumns.reservedCustomerName]);
-      const reservedAt = linkColumns.reservedAt === -1 ? '' : trim_(displayRow[linkColumns.reservedAt]);
-      const reservationUpdatedAt = linkColumns.reservationUpdatedAt === -1 ? '' : trim_(displayRow[linkColumns.reservationUpdatedAt]);
+      // Admin sees full date+time; these fields aren't sent to non-admins anyway.
+      const reservedAt = (rawData && linkColumns.reservedAt !== -1)
+        ? formatDateTime_(rawData[i][linkColumns.reservedAt], tz) : '';
+      const reservationUpdatedAt = (rawData && linkColumns.reservationUpdatedAt !== -1)
+        ? formatDateTime_(rawData[i][linkColumns.reservationUpdatedAt], tz) : '';
 
       let status = trim_(displayRow[columns.STATUS]);
       if (!status) status = issuedTo ? 'Issued' : 'Available';
@@ -2197,7 +2204,7 @@ function getActiveReservationsForCustomer_(customerId) {
       reservationId: trim_(row[linkColumns.reservationId]),
       bookNo: trim_(row[columns.BOOK_NO]),
       bookName: trim_(row[columns.BOOK_NAME]),
-      reservedAt: linkColumns.reservedAt === -1 ? '' : formatDate_(row[linkColumns.reservedAt], tz),
+      reservedAt: linkColumns.reservedAt === -1 ? '' : formatDateTime_(row[linkColumns.reservedAt], tz),
       status: trim_(row[columns.STATUS])
     });
   }
@@ -2943,5 +2950,12 @@ function trim_(val) {
 function formatDate_(val, tz) {
   if (!val || val === '') return '';
   try { return Utilities.formatDate(new Date(val), tz, 'dd/MM/yyyy'); }
+  catch (e) { return String(val); }
+}
+
+// Date + time down to seconds, e.g. "26/07/2026 19:43:07".
+function formatDateTime_(val, tz) {
+  if (val === '' || val == null) return '';
+  try { return Utilities.formatDate(new Date(val), tz, 'dd/MM/yyyy HH:mm:ss'); }
   catch (e) { return String(val); }
 }
