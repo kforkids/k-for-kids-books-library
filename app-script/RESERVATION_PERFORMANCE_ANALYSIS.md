@@ -4,7 +4,33 @@
 
 **Symptom:** A single reservation takes **3+ seconds**.
 
-**Status:** Round 16 — fixed inconsistent rows (Available but still carrying reservation fields). Runtime confirmation pending.
+**Status:** Round 18 — admin banner feedback, yellow in-progress banner, no admin reserve, hide-from-users. Runtime confirmation pending.
+
+---
+
+## Round 18 — admin action feedback + book visibility
+
+Three changes:
+
+1. **Admin cancel/return now use the banner** (like the customer flow). `runAdminAction_` shows a `pending` banner during the call, then `✓ …` success or a red error — instead of a fleeting toast.
+2. **In-progress banner is light yellow.** `.ab-pending` changed from dark slate to `#fff3cd` with dark-amber text (and matching close-button colors) so "in progress" reads as a distinct, softer state.
+3. **Admins no longer see "Reserve This Book"** (it wrongly opened the login modal). The reserve button is now gated to non-admins. Instead, admins get a **Hide from users / Show to users** action:
+   - Server: new `Visibility` column on Books-DB (`VISIBILITY_HEADER`), `getBookVisibilityColumn_` / `ensureBookVisibilityColumn_` / `isBookHidden_` helpers, and `setBookVisibility(bookNo, visible, adminCredential)`. `getBooks` skips `Hidden` books for non-admins and exposes `hidden` (admin-only). Hidden books stay out of the public cache (built with `isAdmin=false`).
+   - Client: hide/unhide button in the Admin Actions panel, a grey **Hidden** badge + dashed outline on hidden cards (admin view only), and a "hidden from end users" note. Uses the banner for feedback.
+
+Reversible and admin-only: end users and customers never see hidden books in the list or search; admins always can, and can unhide.
+
+---
+
+## Round 17 — detail-rich admin confirm dialog
+
+**Problem:** the admin Cancel-reservation / Mark-as-returned confirm was generic ("Cancel this reservation?") — the admin couldn't verify *which* reservation/book they were about to act on.
+
+**Fix (client only, `Index.html`):** the confirm modal now supports a rich HTML body (`confirmAction` gains `opts.bodyHtml`), and `buildAdminConfirmBody_` renders a **large 90×120 book cover** plus title, author · language, book number, and:
+- Cancel reservation → *Reserved by <name>* · *Reserved on <date>* + "This frees the book and removes it from their reservations."
+- Mark as returned → *Issued to <name>* + "This marks the book returned and makes it available again."
+
+Kept the confirm step (destructive, affects another customer) rather than removing it — now it's a real verification. Details come from the admin-only fields already on `allBooks`. `.confirm-cover` CSS added; image has a placeholder fallback.
 
 ---
 

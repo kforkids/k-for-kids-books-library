@@ -144,6 +144,21 @@
   .badge-reserved  { background: #fb8c00; color: #fff; }
   .badge-issued    { background: #e53935; color: #fff; }
 
+  /* Admin-only "Hidden from users" marker */
+  .hidden-badge {
+    position: absolute;
+    top: 7px; left: 7px;
+    font-size: .62rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #616161;
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .book-card.is-hidden-admin { outline: 2px dashed #9e9e9e; outline-offset: -2px; }
+
   /* ── Optimistic "saving…" overlay on a card ── */
   .card-saving {
     position: absolute;
@@ -221,6 +236,24 @@
     justify-content: center;
     color: #bbb;
     font-size: 1.6rem;
+  }
+
+  /* ── Confirm-dialog book cover (large, readable) ── */
+  .confirm-cover {
+    width: 90px;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 8px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,.2);
+  }
+  .confirm-cover-placeholder {
+    background: #f0f4f0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #bbb;
+    font-size: 2.4rem;
   }
 
   .status-pill {
@@ -350,7 +383,10 @@
   .action-banner .ab-close > * { pointer-events: none; }
   .action-banner.ab-success { background: #2e7d32; }
   .action-banner.ab-danger  { background: #c62828; }
-  .action-banner.ab-pending { background: #37474f; }
+  /* Light yellow while an action is in progress — dark amber text for contrast. */
+  .action-banner.ab-pending { background: #fff3cd; color: #664d03; }
+  .action-banner.ab-pending .ab-close { background: rgba(102,77,3,.15); color: #664d03; }
+  .action-banner.ab-pending .ab-close:hover { background: rgba(102,77,3,.28); }
   .action-banner .spinner-border { width: 1.05rem; height: 1.05rem; border-width: .15em; }
 
   /* ── Admin login bar ── */
@@ -803,15 +839,13 @@
 
 <!-- ══════════════ CONFIRM MODAL (reusable) ══════════════ -->
 <div class="modal fade" id="confirmModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered modal-sm">
+  <div class="modal-dialog modal-dialog-centered">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="confirmTitle"><i class="bi bi-question-circle me-2"></i>Please confirm</h5>
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
-      <div class="modal-body">
-        <p class="mb-0" id="confirmMessage" style="font-size:.9rem"></p>
-      </div>
+      <div class="modal-body" id="confirmMessage" style="font-size:.9rem"></div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-danger" id="confirmOkBtn">Confirm</button>
@@ -1019,11 +1053,16 @@ function bookCardHtml(book) {
   const savingOverlay = book._saving
     ? `<div class="card-saving"><span class="spinner-border spinner-border-sm"></span> ${escHtml(book._saving)}…</div>`
     : '';
-  return `<div class="book-card ${book.status !== 'Available' ? 'unavailable' : ''} ${book._saving ? 'is-saving' : ''}"
+  // Admin-only badge marking a book hidden from end users.
+  const hiddenBadge = (adminMode && book.hidden)
+    ? `<span class="hidden-badge"><i class="bi bi-eye-slash me-1"></i>Hidden</span>`
+    : '';
+  return `<div class="book-card ${book.status !== 'Available' ? 'unavailable' : ''} ${book._saving ? 'is-saving' : ''} ${adminMode && book.hidden ? 'is-hidden-admin' : ''}"
                 data-book-no="${escAttr(book.bookNo)}">
     <div class="book-img-wrap">
       ${imgHtml}${placeholder}
       <span class="status-badge badge-${sc}">${escHtml(book.status)}</span>
+      ${hiddenBadge}
       ${savingOverlay}
     </div>
     <div class="book-info">
@@ -1153,7 +1192,9 @@ function openBookDetail(bookNo) {
   const footer = document.getElementById('modalFooter');
   let reserveBtn = '';
   let unreserveBtn = '';
-  if (book.status === 'Available') {
+  // Reserve is a customer action — admins manage books via Admin Actions, not
+  // by reserving, so don't show it in admin mode.
+  if (book.status === 'Available' && !adminMode) {
     reserveBtn = `<button class="btn btn-success" id="bookReserveBtn" onclick="openReserve()">
       <i class="bi bi-bookmark-plus me-1"></i>Reserve This Book
     </button>`;
@@ -1238,10 +1279,47 @@ function buildAdminSection(book) {
     </button>`);
   }
 
+  // Hide / unhide the book from end users.
+  actions.push(book.hidden
+    ? `<button class="btn btn-sm btn-outline-primary" onclick="setBookVisibility(true)">
+         <i class="bi bi-eye me-1"></i>Show to users
+       </button>`
+    : `<button class="btn btn-sm btn-outline-secondary" onclick="setBookVisibility(false)">
+         <i class="bi bi-eye-slash me-1"></i>Hide from users
+       </button>`);
+
+  const hiddenNote = book.hidden
+    ? `<div class="mt-2 small" style="color:#8a6d3b"><i class="bi bi-eye-slash me-1"></i>This book is hidden from end users.</div>`
+    : '';
+
   return `<div class="admin-section">
     <h6><i class="bi bi-shield-lock me-1"></i>Admin Actions</h6>
     <div class="d-flex gap-2 flex-wrap">${actions.join('')}</div>
+    ${hiddenNote}
   </div>`;
+}
+
+// Admin: hide (visible=false) or unhide (visible=true) the active book.
+function setBookVisibility(visible) {
+  if (!activeBook) return;
+  const bookNo = activeBook.bookNo;
+  const title = bookTitle_(bookNo);
+  showBanner(visible ? `Making “${title}” visible…` : `Hiding “${title}”…`, 'pending');
+  bookModal.hide();
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res.success) {
+        // Update local state so the card badge + admin button reflect the change.
+        const b = allBooks.find(x => x.bookNo === bookNo);
+        if (b) b.hidden = res.hidden;
+        applyFilters();
+        showBanner(res.message || (visible ? `✓ “${title}” is visible` : `✓ “${title}” hidden`), 'success');
+      } else {
+        showBanner(res.error || 'Could not update visibility.', 'danger');
+      }
+    })
+    .withFailureHandler(() => showBanner('Something went wrong. Please try again.', 'danger'))
+    .setBookVisibility(bookNo, visible, adminToken);
 }
 
 // ════════════════════════════════════════════════
@@ -1658,35 +1736,81 @@ function doAdminAction(action, bookNo) {
   bookNo = bookNo || (activeBook && activeBook.bookNo);
   if (!bookNo) return;
   const cfg = {
-    cancelReservation: { prompt: 'Cancel this reservation?', title: 'Cancel reservation', confirmLabel: 'Cancel reservation' },
-    returnBook:        { prompt: 'Mark this book as returned?', title: 'Mark as returned', confirmLabel: 'Mark as returned' }
+    cancelReservation: { title: 'Cancel reservation', confirmLabel: 'Cancel reservation' },
+    returnBook:        { title: 'Mark as returned',   confirmLabel: 'Mark as returned' }
   }[action];
   if (!cfg) return;
+
+  const book = allBooks.find(b => b.bookNo === bookNo) || activeBook || { bookNo };
 
   // Close the book detail modal first so only the confirm dialog is on screen
   // (avoids stacked-modal backdrop issues).
   bookModal.hide();
   setTimeout(() => {
-    confirmAction(cfg.prompt, () => runAdminAction_(action, bookNo), {
+    confirmAction(null, () => runAdminAction_(action, bookNo), {
       title: cfg.title,
       confirmLabel: cfg.confirmLabel,
-      confirmClass: 'btn-danger'
+      confirmClass: 'btn-danger',
+      bodyHtml: buildAdminConfirmBody_(book, action)
     });
   }, 250);
 }
 
+// Rich confirm body for admin cancel/return: large cover + book + who/when.
+function buildAdminConfirmBody_(book, action) {
+  const cover = book.imageUrl
+    ? `<img src="${escAttr(book.imageUrl)}" alt="" class="confirm-cover"
+         onerror="this.outerHTML='<div class=\\'confirm-cover confirm-cover-placeholder\\'><i class=\\'bi bi-book\\'></i></div>'">`
+    : `<div class="confirm-cover confirm-cover-placeholder"><i class="bi bi-book"></i></div>`;
+
+  const meta = [];
+  if (book.author)   meta.push(escHtml(book.author));
+  if (book.language) meta.push(escHtml(book.language));
+  const metaLine = meta.length ? `<div class="text-muted small mb-1">${meta.join(' · ')}</div>` : '';
+
+  let detailRows = '';
+  if (action === 'cancelReservation') {
+    const who  = book.reservedBy ? `<div><i class="bi bi-person-fill me-1"></i>Reserved by <b>${escHtml(book.reservedBy)}</b></div>` : '';
+    const when = book.reservedAt ? `<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Reserved on <b>${escHtml(book.reservedAt)}</b></div>` : '';
+    detailRows = who + when +
+      `<div class="mt-2 text-muted" style="font-size:.8rem">This frees the book and removes it from their reservations.</div>`;
+  } else {
+    const who = book.issuedTo ? `<div><i class="bi bi-person-fill me-1"></i>Issued to <b>${escHtml(book.issuedTo)}</b></div>` : '';
+    detailRows = who +
+      `<div class="mt-2 text-muted" style="font-size:.8rem">This marks the book returned and makes it available again.</div>`;
+  }
+
+  return `<div class="d-flex gap-3">
+      ${cover}
+      <div style="min-width:0">
+        <div class="fw-bold mb-1">${escHtml(book.bookName || book.bookNo)}</div>
+        ${metaLine}
+        <div class="text-muted small mb-2">${escHtml(book.bookNo)}</div>
+        ${detailRows}
+      </div>
+    </div>`;
+}
+
 function runAdminAction_(action, bookNo) {
+  const title = bookTitle_(bookNo);
+  const pending = action === 'cancelReservation'
+    ? `Cancelling reservation for “${title}”…`
+    : `Marking “${title}” as returned…`;
+  showBanner(pending, 'pending');
+
   google.script.run
     .withSuccessHandler(res => {
       if (res.success) {
-        showToast(res.message, 'success');
-        if (action === 'cancelReservation') refreshBook(bookNo, 'Available', '', '', '');
-        if (action === 'returnBook')        refreshBook(bookNo, 'Available', '', '', '');
+        refreshBook(bookNo, 'Available', '', '', '');
+        const done = action === 'cancelReservation'
+          ? `✓ Reservation cancelled for “${title}”`
+          : `✓ “${title}” marked as returned`;
+        showBanner(done, 'success');
       } else {
-        showToast(res.error || 'Failed.', 'danger');
+        showBanner(res.error || 'Action failed.', 'danger');
       }
     })
-    .withFailureHandler(err => showToast('Something went wrong. Please try again.', 'danger'))
+    .withFailureHandler(err => showBanner('Something went wrong. Please try again.', 'danger'))
     [action](bookNo, adminToken);
 }
 
@@ -2036,12 +2160,16 @@ function hideBanner() {
 
 // Reusable confirm dialog (replaces the native confirm()). Calls onConfirm only
 // when the user clicks the confirm button.
-//   opts: { title, confirmLabel, confirmClass }  (all optional)
+//   opts: { title, confirmLabel, confirmClass, bodyHtml }  (all optional)
+//   bodyHtml — pre-built, already-escaped HTML for a rich body (image + details).
+//   When omitted, `message` is shown as plain text.
 function confirmAction(message, onConfirm, opts) {
   opts = opts || {};
   document.getElementById('confirmTitle').innerHTML =
     '<i class="bi bi-question-circle me-2"></i>' + escHtml(opts.title || 'Please confirm');
-  document.getElementById('confirmMessage').textContent = message;
+  const body = document.getElementById('confirmMessage');
+  if (opts.bodyHtml) body.innerHTML = opts.bodyHtml;
+  else body.textContent = message;
 
   const okBtn = document.getElementById('confirmOkBtn');
   okBtn.className = 'btn ' + (opts.confirmClass || 'btn-danger');

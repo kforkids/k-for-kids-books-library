@@ -47,6 +47,9 @@ const RESERVED_CUSTOMER_ID_HEADER = 'Reserved Customer ID';
 const RESERVED_CUSTOMER_NAME_HEADER = 'Reserved Customer Name';
 const RESERVED_AT_HEADER = 'Reserved At';
 const RESERVATION_UPDATED_AT_HEADER = 'Reservation Updated At';
+// Admin can hide a book from end users. Empty/"Visible" = shown; "Hidden" = only
+// admins see it (with a Hidden badge) and can unhide.
+const VISIBILITY_HEADER = 'Visibility';
 
 // Column indices in Customer DB sheet (0-based)
 // Header: Sr no | Name | Date of start | Location | Address | Account status | Till date sum
@@ -729,6 +732,7 @@ function getBooks(filters, adminCredential, customerToken) {
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
     const linkColumns = getExistingBookReservationLinkColumns_(sheet, headerRow);
+    const visibilityColumn = getBookVisibilityColumn_(sheet, headerRow);
     const range    = sheet.getDataRange();
     const displayData = range.getDisplayValues();
     // Build the image map if the cache is cold so the FIRST getBooks already
@@ -743,6 +747,10 @@ function getBooks(filters, adminCredential, customerToken) {
       const displayRow = displayData[i];
       const bookNo     = trim_(displayRow[columns.BOOK_NO]);
       if (!bookNo)  continue;
+
+      // Visibility: hidden books are shown only to admins (with a Hidden badge).
+      const hidden = visibilityColumn !== -1 && isBookHidden_(displayRow[visibilityColumn]);
+      if (hidden && !isAdmin) continue;
 
       const language   = trim_(displayRow[columns.LANGUAGE]);
       const ageGroup   = trim_(displayRow[columns.AGE_GROUP]);
@@ -794,7 +802,9 @@ function getBooks(filters, adminCredential, customerToken) {
         notes:      '',
         reservationId: isAdmin || isMyReservation ? effectiveReservationId : '',
         reservedCustomerId: isAdmin || isMyReservation ? effectiveReservedCustomerId : '',
-        isMyReservation
+        isMyReservation,
+        // Admin-only: whether this book is hidden from end users.
+        hidden: isAdmin ? hidden : false
       });
     }
 
@@ -1260,6 +1270,32 @@ function cancelReservation(bookNo, adminCredential) {
     return { success: true, message: '✅ Reservation cancelled.' };
   } catch (err) {
     return reportError_('cancelReservation', err);
+  }
+}
+
+// Admin: hide a book from end users (visible=false) or unhide it (visible=true).
+// Hidden books are still visible to admins in the list (with a Hidden badge).
+function setBookVisibility(bookNo, visible, adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
+    bookNo = trim_(bookNo);
+    if (!bookNo) return { success: false, error: 'Book number is required.' };
+
+    const { sheet, headerRow, columns } = getSheetAndHeader_();
+    const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
+    if (!bookRowNumber) return { success: false, error: 'Book not found.' };
+
+    const visibilityColumn = ensureBookVisibilityColumn_(sheet, headerRow);
+    sheet.getRange(bookRowNumber, visibilityColumn + 1).setValue(visible ? 'Visible' : 'Hidden');
+
+    invalidatePublicBooksCache_();
+    return {
+      success: true,
+      hidden: !visible,
+      message: visible ? '✅ Book is now visible to everyone.' : '✅ Book hidden from end users.'
+    };
+  } catch (err) {
+    return reportError_('setBookVisibility', err);
   }
 }
 
@@ -2231,6 +2267,31 @@ function getExistingBookReservationLinkColumns_(sheet, headerRow) {
     reservedAt: getHeaderIndex_(headerMap, RESERVED_AT_HEADER),
     reservationUpdatedAt: getHeaderIndex_(headerMap, RESERVATION_UPDATED_AT_HEADER)
   };
+}
+
+// Read the Visibility column index (no create). -1 if the column doesn't exist.
+function getBookVisibilityColumn_(sheet, headerRow) {
+  const headerValues = sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return getHeaderIndex_(getHeaderMap_(headerValues), VISIBILITY_HEADER);
+}
+
+// Ensure the Visibility column exists (create it once if missing) and return its
+// index. Clears cached master reads if a column was added.
+function ensureBookVisibilityColumn_(sheet, headerRow) {
+  let idx = getBookVisibilityColumn_(sheet, headerRow);
+  if (idx === -1) {
+    sheet.getRange(headerRow + 1, sheet.getLastColumn() + 1).setValue(VISIBILITY_HEADER);
+    idx = getBookVisibilityColumn_(sheet, headerRow);
+    REQUEST_CACHE_.masterData = null;
+    REQUEST_CACHE_.masterSheet = null;
+  }
+  return idx;
+}
+
+// A book is hidden only when its Visibility cell explicitly says "Hidden".
+// Empty / "Visible" / anything else = shown.
+function isBookHidden_(value) {
+  return trim_(value).toLowerCase() === 'hidden';
 }
 
 function clearBookReservationLink_(bookNo, reservationId) {
