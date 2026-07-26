@@ -817,6 +817,9 @@ let filters      = { language: '', ageGroup: '', status: '', search: '', withIma
 let myReservationsCache = null;
 // Guard so a stale-high server count triggers at most ONE auto-retry, never a loop.
 let limitRetryDone = false;
+// True while a reserve/unreserve/swap round-trip is in flight — blocks a second
+// overlapping action (and tells the user to wait) until it resolves.
+let reservationActionInFlight = false;
 
 const bookModal    = new bootstrap.Modal('#bookModal');
 const reserveModal = new bootstrap.Modal('#reserveModal');
@@ -1181,9 +1184,11 @@ function buildAdminSection(book) {
 // ════════════════════════════════════════════════
 function openReserve() {
   if (!activeBook) return;
-  pendingReserveBookNo = activeBook.bookNo;
 
   if (currentCustomer && customerToken) {
+    // Block if another reserve/unreserve is still saving.
+    if (!beginReservationAction_()) return;
+    pendingReserveBookNo = activeBook.bookNo;
     // Immediate feedback: disable the button + show a spinner the instant it's
     // clicked, before the modal closes, so there's no dead moment.
     const btn = document.getElementById('bookReserveBtn');
@@ -1195,6 +1200,7 @@ function openReserve() {
     return;
   }
 
+  pendingReserveBookNo = activeBook.bookNo;
   bookModal.hide();
   setTimeout(() => openCustomerAuth(), 300);
 }
@@ -1292,9 +1298,15 @@ function reserveLoggedInCustomer(bookNo, swapContext) {
   const myReservations = getMyReservationsFromLoadedBooks();
   const limit = customerReservationLimit();
   if (limit && myReservations.length >= limit) {
-    // At limit: reset the reserve button, close the book modal, show the swap modal.
+    // At limit: reset the reserve button, close the book modal, tell the user
+    // clearly why, then show the swap modal.
+    endReservationAction_();
     setInlineButtonLoading(document.getElementById('bookReserveBtn'), false);
     bookModal.hide();
+    showBanner(
+      `You've reached your limit of ${limit} reserved book${limit === 1 ? '' : 's'} — unreserve one to reserve “${bookTitle_(bookNo)}”.`,
+      'danger', 6000
+    );
     showReservationLimitModal({ monthlyLimit: limit }, myReservations);
     return;
   }
@@ -1326,6 +1338,7 @@ function reserveLoggedInCustomer(bookNo, swapContext) {
       console.log('[PERF] reserve round-trip: ' + (Date.now() - __t0) + 'ms');
       clearBookSaving_(bookNo);
       if (res.success) {
+        endReservationAction_();
         limitRetryDone = false;
         // Reconcile the temp id with the real reservationId from the server.
         refreshBook(bookNo, 'Reserved', '', '', '', '', {
@@ -1342,28 +1355,34 @@ function reserveLoggedInCustomer(bookNo, swapContext) {
         restoreBook_(snap);
         const serverReservations = getMyReservationsFromLoadedBooks();
         if (!limitRetryDone && serverReservations.length < (res.monthlyLimit || 0)) {
+          // Self-heal retry: keep the action flag set — reserveLoggedInCustomer
+          // will resolve (and clear it) on the retry.
           limitRetryDone = true;
           myReservationsCache = null;
           google.script.run
             .withSuccessHandler(() => reserveLoggedInCustomer(bookNo))
-            .withFailureHandler(() => { hideBanner(); showReservationLimitModal(res, serverReservations); })
+            .withFailureHandler(() => { endReservationAction_(); hideBanner(); showReservationLimitModal(res, serverReservations); })
             .getMyReservations(customerToken);
           return;
         }
+        endReservationAction_();
         limitRetryDone = false;
         hideBanner(); // a modal takes over
         showReservationLimitModal(res, res.reservations || serverReservations);
       } else if (res.code === 'UNAVAILABLE') {
+        endReservationAction_();
         // Someone else got it first — roll back to the true (taken) status.
         restoreBook_(snap);
         refreshBook(res.bookNo || bookNo, res.status || 'Reserved', '', '', '');
         showBanner(res.error || `“${title}” is no longer available`, 'danger');
       } else {
+        endReservationAction_();
         restoreBook_(snap);
         showBanner(res.error || `Could not reserve “${title}”`, 'danger');
       }
     })
     .withFailureHandler(() => {
+      endReservationAction_();
       clearBookSaving_(bookNo);
       restoreBook_(snap);
       showBanner(`Could not reserve “${title}”. Please try again.`, 'danger');
@@ -1436,6 +1455,9 @@ function showReservationLimitModal(res, clientReservations) {
 // the retry reserve is itself optimistic. Roll back the swapped book on failure.
 function unreserveThenRetry(reservationId, bookNo) {
   if (!reservationId || !pendingReserveBookNo) return;
+  // Block if another action is mid-flight; otherwise hold the flag across BOTH
+  // the unreserve and the chained reserve.
+  if (!beginReservationAction_()) return;
   const swapBookNo = bookNo || '';
   const snap = swapBookNo ? snapshotBook_(swapBookNo) : null;
   const pending = pendingReserveBookNo;
@@ -1457,14 +1479,17 @@ function unreserveThenRetry(reservationId, bookNo) {
       if (res.success) {
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
         // Now that the unreserve is committed, run the (optimistic) reserve; pass
-        // the cancelled title so its success banner names both books.
+        // the cancelled title so its success banner names both books. The flag
+        // stays set and is cleared when that reserve resolves.
         reserveLoggedInCustomer(pending, { cancelledTitle });
       } else {
+        endReservationAction_();
         restoreBook_(snap);
         showBanner(res.error || `Could not cancel “${cancelledTitle}”`, 'danger');
       }
     })
     .withFailureHandler(() => {
+      endReservationAction_();
       clearBookSaving_(swapBookNo);
       restoreBook_(snap);
       showBanner(`Could not cancel “${cancelledTitle}”. Please try again.`, 'danger');
@@ -1476,6 +1501,8 @@ function unreserveThenRetry(reservationId, bookNo) {
 // then confirm with the server in the background; roll back on failure.
 function unreserveMyActiveBook(reservationId) {
   if (!reservationId) return;
+  // Block if another action is mid-flight.
+  if (!beginReservationAction_()) return;
   const bookNo = activeBook ? activeBook.bookNo : '';
   const title = bookTitle_(bookNo);
   // Immediate feedback: disable the button + spinner the instant it's clicked.
@@ -1494,6 +1521,7 @@ function unreserveMyActiveBook(reservationId) {
   google.script.run
     .withSuccessHandler(res => {
       console.log('[PERF] unreserve round-trip: ' + (Date.now() - __t0) + 'ms');
+      endReservationAction_();
       clearBookSaving_(bookNo);
       if (res.success) {
         if (res.bookNo) refreshBook(res.bookNo, 'Available', '', '', '');
@@ -1505,6 +1533,7 @@ function unreserveMyActiveBook(reservationId) {
       }
     })
     .withFailureHandler(() => {
+      endReservationAction_();
       clearBookSaving_(bookNo);
       restoreBook_(snap);
       showBanner(`Could not cancel “${title}”. Please try again.`, 'danger');
@@ -1713,7 +1742,7 @@ function handleCustomerAuthResponse(res) {
     showToast(res.message || 'Logged in.', 'success');
     if (pendingReserveBookNo) {
       const bookNo = pendingReserveBookNo;
-      setTimeout(() => reserveLoggedInCustomer(bookNo), 300);
+      setTimeout(() => { if (beginReservationAction_()) reserveLoggedInCustomer(bookNo); }, 300);
     }
   } else {
     showToast((res && res.error) || 'Login failed.', 'danger');
@@ -1914,6 +1943,21 @@ function showBanner(msg, type, autoHideMs) {
 function hideBanner() {
   clearTimeout(_bannerTimer);
   document.getElementById('actionBanner').classList.remove('show');
+}
+
+// Returns true if it's OK to start a reservation action. If one is already in
+// flight, it shows a "please wait" banner and returns false so the caller bails.
+function beginReservationAction_() {
+  if (reservationActionInFlight) {
+    showBanner('Please wait — finishing your last action…', 'pending', 2500);
+    return false;
+  }
+  reservationActionInFlight = true;
+  return true;
+}
+
+function endReservationAction_() {
+  reservationActionInFlight = false;
 }
 
 function onError(err) {
