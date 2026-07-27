@@ -665,78 +665,64 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
-        <ul class="nav nav-tabs mb-3" role="tablist">
-          <li class="nav-item" role="presentation">
-            <button class="nav-link active" id="login-tab" data-bs-toggle="tab" data-bs-target="#loginPane" type="button" role="tab">Login</button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="claim-tab" data-bs-toggle="tab" data-bs-target="#claimPane" type="button" role="tab">Join with Invite Code</button>
-          </li>
-          <li class="nav-item" role="presentation">
-            <button class="nav-link" id="admin-tab" data-bs-toggle="tab" data-bs-target="#adminPane" type="button" role="tab"><i class="bi bi-shield-lock me-1"></i>Admin</button>
-          </li>
-        </ul>
-        <div class="tab-content">
-          <div class="tab-pane fade show active" id="loginPane" role="tabpanel" aria-labelledby="login-tab">
-            <form id="customerLoginForm" onsubmit="return false;" autocomplete="on">
-              <div class="mb-3">
-                <label class="form-label" for="loginIdentifier">Email or Phone</label>
-                <input type="text" id="loginIdentifier" name="username" class="form-control" autocomplete="username" placeholder="Email address or phone number">
-              </div>
-              <div class="mb-2">
-                <label class="form-label" for="loginPassword">Password</label>
-                <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password"
-                       onkeydown="if(event.key==='Enter') loginCustomer()">
-              </div>
-              <div class="form-check mb-1">
-                <input class="form-check-input" type="checkbox" id="rememberMe">
-                <label class="form-check-label small" for="rememberMe">Remember me on this device</label>
-              </div>
-            </form>
-          </div>
-          <div class="tab-pane fade" id="claimPane" role="tabpanel" aria-labelledby="claim-tab">
-            <div class="alert alert-info py-2 small">
-              Use the Customer ID and invite code shared by the admin, then add an email or phone number and create a password.
-            </div>
+        <!-- ── LOGIN (default): one form for customers AND admins ── -->
+        <div id="loginPane">
+          <form id="customerLoginForm" onsubmit="return false;" autocomplete="on">
             <div class="mb-3">
-              <label class="form-label">Customer ID</label>
-              <input type="text" id="claimCustomerId" class="form-control" placeholder="KFK-FIRST-LAST-12345" autocomplete="off">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Invite Code</label>
-              <input type="text" id="claimInviteCode" class="form-control" placeholder="KFK-XXXXX-XXXXX" autocomplete="one-time-code">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Email <span class="text-muted">(email or phone required)</span></label>
-              <input type="email" id="claimEmail" class="form-control" autocomplete="email">
-            </div>
-            <div class="mb-3">
-              <label class="form-label">Phone <span class="text-muted">(email or phone required)</span></label>
-              <input type="tel" id="claimPhone" class="form-control" autocomplete="tel">
+              <label class="form-label" for="loginIdentifier">Email or Phone</label>
+              <input type="text" id="loginIdentifier" name="username" class="form-control" autocomplete="username" placeholder="Email address or phone number">
             </div>
             <div class="mb-2">
-              <label class="form-label">Create Password</label>
-              <input type="password" id="claimPassword" class="form-control" autocomplete="new-password"
-                     onkeydown="if(event.key==='Enter') claimExistingCustomer()">
-              <div class="form-text">Use at least 8 characters.</div>
+              <label class="form-label" for="loginPassword">Password</label>
+              <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password"
+                     onkeydown="if(event.key==='Enter') submitCustomerAuth()">
             </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="rememberMe">
+              <label class="form-check-label small" for="rememberMe">Remember me on this device</label>
+            </div>
+          </form>
+          <div class="small">
+            <a href="#" onclick="showInvitePane(event)">Have an invite code?</a>
           </div>
-          <div class="tab-pane fade" id="adminPane" role="tabpanel" aria-labelledby="admin-tab">
-            <div class="alert alert-warning py-2 small">
-              <i class="bi bi-shield-lock me-1"></i>Library staff only. Enter the admin password to manage books and customers.
-            </div>
-            <div class="mb-2">
-              <label class="form-label" for="adminPasswordInput">Admin Password</label>
-              <input type="password" id="adminPasswordInput" class="form-control" autocomplete="off"
-                     placeholder="Enter admin password" onkeydown="if(event.key==='Enter') loginAdmin()">
-            </div>
+        </div>
+
+        <!-- ── JOIN WITH INVITE CODE (revealed via the link above) ── -->
+        <div id="claimPane" style="display:none">
+          <div class="alert alert-info py-2 small">
+            Use the Customer ID and invite code shared by the admin, then add an email or phone number and create a password.
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Customer ID</label>
+            <input type="text" id="claimCustomerId" class="form-control" placeholder="KFK-FIRST-LAST-12345" autocomplete="off">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Invite Code</label>
+            <input type="text" id="claimInviteCode" class="form-control" placeholder="KFK-XXXXX-XXXXX" autocomplete="one-time-code">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Email <span class="text-muted">(email or phone required)</span></label>
+            <input type="email" id="claimEmail" class="form-control" autocomplete="email">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Phone <span class="text-muted">(email or phone required)</span></label>
+            <input type="tel" id="claimPhone" class="form-control" autocomplete="tel">
+          </div>
+          <div class="mb-2">
+            <label class="form-label">Create Password</label>
+            <input type="password" id="claimPassword" class="form-control" autocomplete="new-password"
+                   onkeydown="if(event.key==='Enter') claimExistingCustomer()">
+            <div class="form-text">Use at least 8 characters.</div>
+          </div>
+          <div class="small">
+            <a href="#" onclick="showLoginPane(event)">← Back to login</a>
           </div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
         <button type="button" class="btn btn-success" id="customerAuthSubmitBtn" onclick="submitCustomerAuth()">
-          Continue
+          Login
         </button>
       </div>
     </div>
@@ -941,15 +927,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // Action-banner dismiss button (listener is more reliable than inline onclick).
   const bannerClose = document.getElementById('actionBannerClose');
   if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
-
-  // Update the auth modal's submit-button label to match the active tab.
-  const authLabels = { 'login-tab': 'Login', 'claim-tab': 'Join', 'admin-tab': 'Login as admin' };
-  ['login-tab', 'claim-tab', 'admin-tab'].forEach(tabId => {
-    const tab = document.getElementById(tabId);
-    if (tab) tab.addEventListener('shown.bs.tab', () => {
-      document.getElementById('customerAuthSubmitBtn').textContent = authLabels[tabId] || 'Continue';
-    });
-  });
 });
 
 function loadBooks() {
@@ -1862,37 +1839,8 @@ function runAdminAction_(action, bookNo) {
 }
 
 // ════════════════════════════════════════════════
-// Admin login
+// Admin logout (login is handled by the unified doLogin)
 // ════════════════════════════════════════════════
-function loginAdmin() {
-  const pwd = document.getElementById('adminPasswordInput').value;
-  if (!pwd) { showToast('Enter the admin password.', 'warning'); return; }
-
-  setButtonLoading('customerAuthModal', true);
-  google.script.run
-    .withSuccessHandler(res => {
-      setButtonLoading('customerAuthModal', false);
-      if (res && res.success && res.token) {
-        adminMode = true;
-        adminToken = res.token;
-        document.getElementById('adminModeBadge').style.display = '';
-        document.getElementById('adminPasswordInput').value     = '';
-        document.getElementById('adminTabBar').style.display    = '';
-        customerAuthModal.hide();
-        renderCustomerState(); // toggle header Login→Logout
-        showToast('Admin mode active.', 'success');
-        loadBooks(); // reload with admin-only fields
-      } else {
-        showToast((res && res.error) || 'Incorrect password.', 'danger');
-      }
-    })
-    .withFailureHandler(err => {
-      setButtonLoading('customerAuthModal', false);
-      showToast('Something went wrong. Please try again.', 'danger');
-    })
-    .loginAdmin(pwd);
-}
-
 function logoutAdmin() {
   const token = adminToken;
   adminMode      = false;
@@ -1950,38 +1898,67 @@ function openCustomerAuth() {
   document.getElementById('loginIdentifier').value =
     (currentCustomer && (currentCustomer.email || currentCustomer.phone)) || remembered;
   document.getElementById('rememberMe').checked = Boolean(remembered);
-  document.getElementById('adminPasswordInput').value = '';
   document.getElementById('loginPassword').value = '';
   document.getElementById('claimCustomerId').value = '';
   document.getElementById('claimInviteCode').value = '';
   document.getElementById('claimEmail').value = '';
   document.getElementById('claimPhone').value = '';
   document.getElementById('claimPassword').value = '';
-  // Always open on the Login tab with the matching button label.
-  try { bootstrap.Tab.getOrCreateInstance(document.getElementById('login-tab')).show(); } catch (e) {}
-  document.getElementById('customerAuthSubmitBtn').textContent = 'Login';
+  showLoginPane(); // always open on the login pane
   customerAuthModal.show();
 }
 
-function submitCustomerAuth() {
-  if (document.getElementById('adminPane').classList.contains('active')) { loginAdmin(); return; }
-  if (document.getElementById('claimPane').classList.contains('active')) { claimExistingCustomer(); return; }
-  loginCustomer();
+// Toggle between the login pane and the invite-code (claim) pane.
+function showInvitePane(e) {
+  if (e) e.preventDefault();
+  document.getElementById('loginPane').style.display = 'none';
+  document.getElementById('claimPane').style.display = '';
+  document.getElementById('customerAuthSubmitBtn').textContent = 'Join';
+}
+function showLoginPane(e) {
+  if (e) e.preventDefault();
+  document.getElementById('claimPane').style.display = 'none';
+  document.getElementById('loginPane').style.display = '';
+  document.getElementById('customerAuthSubmitBtn').textContent = 'Login';
 }
 
-function loginCustomer() {
+function submitCustomerAuth() {
+  const claimVisible = document.getElementById('claimPane').style.display !== 'none';
+  if (claimVisible) { claimExistingCustomer(); return; }
+  doLogin();
+}
+
+// Unified login — one form for customers AND admins. The server (login())
+// decides the role based on the credentials and returns role: admin|customer.
+function doLogin() {
   const identifier = document.getElementById('loginIdentifier').value.trim();
   const password = document.getElementById('loginPassword').value;
-  if (!identifier || !password) { showToast('Email or phone and password are required.', 'warning'); return; }
+  if (!identifier || !password) { showToast('Enter your email/phone (or admin username) and password.', 'warning'); return; }
 
   setButtonLoading('customerAuthModal', true);
   google.script.run
-    .withSuccessHandler(res => handleCustomerAuthResponse(res))
+    .withSuccessHandler(res => {
+      setButtonLoading('customerAuthModal', false);
+      if (res && res.success && res.role === 'admin' && res.token) {
+        // Admin login.
+        adminMode = true;
+        adminToken = res.token;
+        document.getElementById('adminModeBadge').style.display = '';
+        document.getElementById('adminTabBar').style.display    = '';
+        customerAuthModal.hide();
+        renderCustomerState();
+        showToast('Admin mode active.', 'success');
+        loadBooks();
+      } else {
+        // Customer login (or failure) — reuse the existing handler.
+        handleCustomerAuthResponse(res);
+      }
+    })
     .withFailureHandler(() => {
       setButtonLoading('customerAuthModal', false);
       showToast('Something went wrong. Please try again.', 'danger');
     })
-    .loginCustomer(identifier, password);
+    .login(identifier, password);
 }
 
 function claimExistingCustomer() {

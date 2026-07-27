@@ -1430,6 +1430,35 @@ function claimExistingCustomer(customerId, inviteCode, email, password, phone) {
   }
 }
 
+// Unified login entry: one form for both admins and customers. Tries admin
+// credentials first (ADMIN_USERNAME + ADMIN_PASSWORD); otherwise falls through
+// to customer login. Returns `role: 'admin' | 'customer'` so the client knows
+// which mode to enter.
+function login(identifier, password) {
+  try {
+    if (!checkRateLimit_('login', 12, 300)) {
+      return { success: false, error: rateLimitMessage_('Too many login attempts.') };
+    }
+    if (!trim_(identifier) || !password) {
+      return { success: false, error: 'Username/email/phone and password are required.' };
+    }
+
+    // Admin path (explicit username + password).
+    if (verifyAdminCredentials_(identifier, password)) {
+      const token = Utilities.getUuid() + Utilities.getUuid();
+      CacheService.getScriptCache().put(adminSessionKey_(token), '1', ADMIN_SESSION_SECS);
+      return { success: true, role: 'admin', token };
+    }
+
+    // Customer path.
+    const res = loginCustomer(identifier, password);
+    if (res && res.success) res.role = 'customer';
+    return res;
+  } catch (err) {
+    return reportError_('login', err);
+  }
+}
+
 function loginCustomer(identifier, password) {
   try {
     if (!checkRateLimit_('customer-login', 10, 300)) {
@@ -2867,6 +2896,16 @@ function normalizeImageFileName_(fileName) {
 function verifyAdmin_(password) {
   const stored = PropertiesService.getScriptProperties().getProperty('ADMIN_PASSWORD');
   return Boolean(stored) && password === stored;
+}
+
+// True when the given identifier + password match the configured admin
+// credentials (ADMIN_USERNAME + ADMIN_PASSWORD script properties).
+function verifyAdminCredentials_(identifier, password) {
+  const props = PropertiesService.getScriptProperties();
+  const storedUser = trim_(props.getProperty('ADMIN_USERNAME'));
+  const storedPass = props.getProperty('ADMIN_PASSWORD');
+  if (!storedUser || !storedPass) return false;
+  return trim_(identifier).toLowerCase() === storedUser.toLowerCase() && password === storedPass;
 }
 
 function verifyAdminCredential_(credential) {

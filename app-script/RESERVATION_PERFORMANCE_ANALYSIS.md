@@ -4,7 +4,19 @@
 
 **Symptom:** A single reservation takes **3+ seconds**.
 
-**Status:** Round 19 — unified login (admin + customer in one modal) + Remember me. Runtime confirmation pending.
+**Status:** Round 20 — single login form for admin + customer; invite code behind a link. Runtime confirmation pending.
+
+---
+
+## Round 20 — one login form; admin via username+password; invite behind a link
+
+Follow-up to round 19: the auth modal's tabs (Login / Join / Admin) were removed.
+
+- **One Login form for everyone.** Admin now logs in through the same email/phone-or-username + password form. New server `login(identifier, password)` checks admin credentials first (new `ADMIN_USERNAME` script property + existing `ADMIN_PASSWORD`) and returns `role: 'admin'`; otherwise it falls through to `loginCustomer` and returns `role: 'customer'`. The client (`doLogin`) enters admin or customer mode based on the role. The Admin tab is gone — nothing advertises admin, but auth is still fully server-verified + rate-limited.
+- **Invite code behind a link.** The "Join with Invite Code" tab became a small "Have an invite code?" link that reveals the claim form (with "← Back to login"). Cleaner default view; new customers still reach it.
+- Removed the client `loginAdmin`/`loginCustomer` wrappers and the tab-label listener; `openCustomerAuth` resets to the login pane.
+
+**Setup note:** add an `ADMIN_USERNAME` script property (Project Settings → Script Properties) alongside `ADMIN_PASSWORD`. The old server `loginAdmin(password)` is left in place but unused.
 
 ---
 
