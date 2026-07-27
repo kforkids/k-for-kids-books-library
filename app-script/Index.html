@@ -1187,10 +1187,14 @@ function openBookDetail(bookNo) {
            ${rows.join('') || 'Reservation details are unavailable.'}
          </div>`;
     } else if (book.isMyReservation) {
-      // The logged-in customer's OWN reservation — make it explicit and positive.
+      // The logged-in customer's OWN reservation — explicit, positive, and shows
+      // exactly when they reserved it (owner + admin only; never other users).
+      const whenLine = book.reservedAt
+        ? `<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Reserved on <b>${escHtml(book.reservedAt)}</b></div>`
+        : '';
       reservationInfo = `<div class="alert alert-success py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
-           <i class="bi bi-bookmark-check-fill me-1"></i>
-           <b>You've reserved this book.</b> Use “Unreserve” below to cancel it.
+           <div><i class="bi bi-bookmark-check-fill me-1"></i><b>You've reserved this book.</b> Use “Unreserve” below to cancel it.</div>
+           ${whenLine}
          </div>`;
     } else {
       reservationInfo = `<div class="alert alert-warning py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
@@ -1277,15 +1281,20 @@ function applyMyReservationToModal_(book, reservations) {
 
   book.isMyReservation = true;
   book.reservationId = reservation.reservationId;
+  if (reservation.reservedAt) book.reservedAt = reservation.reservedAt;
   activeBook = book;
 
   // Swap the generic "currently reserved" notice for the explicit "you reserved
-  // this" message now that we know it's the customer's own reservation.
+  // this" message (with the reservation time) now that we know it's the
+  // customer's own reservation.
   const infoBox = document.getElementById('reservationInfoBox');
   if (infoBox && !adminMode) {
+    const whenLine = book.reservedAt
+      ? `<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Reserved on <b>${escHtml(book.reservedAt)}</b></div>`
+      : '';
     infoBox.innerHTML = `<div class="alert alert-success py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
-         <i class="bi bi-bookmark-check-fill me-1"></i>
-         <b>You've reserved this book.</b> Use “Unreserve” below to cancel it.
+         <div><i class="bi bi-bookmark-check-fill me-1"></i><b>You've reserved this book.</b> Use “Unreserve” below to cancel it.</div>
+         ${whenLine}
        </div>`;
   }
 

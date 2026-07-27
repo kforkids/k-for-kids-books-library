@@ -737,7 +737,10 @@ function getBooks(filters, adminCredential, customerToken) {
     const displayData = range.getDisplayValues();
     // Raw values for the reservation timestamps — needed so we can format them
     // with time (to the second), not just the sheet's date-only cell display.
-    const rawData  = isAdmin ? range.getValues() : null;
+    // Read them for admins AND logged-in customers (a customer may see the time
+    // on their OWN reservation); not needed for anonymous public visitors.
+    const needsRaw = isAdmin || Boolean(currentCustomer);
+    const rawData  = needsRaw ? range.getValues() : null;
     const tz       = Session.getScriptTimeZone();
     // Build the image map if the cache is cold so the FIRST getBooks already
     // returns image URLs — avoids the "load once without images, reload with
@@ -799,10 +802,12 @@ function getBooks(filters, adminCredential, customerToken) {
         status,
         imageUrl:   imageMap[bookNo] || '',
         // Admin-only fields — empty string for non-admin (never reveal who
-        // reserved a book, or when, to other customers).
+        // reserved a book, or when, to OTHER customers).
         issuedTo:   isAdmin ? issuedTo   : '',
         reservedBy: isAdmin ? reservedCustomerName : '',
-        reservedAt: isAdmin ? reservedAt : '',
+        // reservedAt goes to the admin AND the owner (so they can see when they
+        // reserved it), but never to other customers.
+        reservedAt: (isAdmin || isMyReservation) ? reservedAt : '',
         reservationUpdatedAt: isAdmin ? reservationUpdatedAt : '',
         phone:      '',
         issueDate:  '',
