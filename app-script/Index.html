@@ -44,40 +44,40 @@
   .search-bar { background: #fff; padding: 12px 16px; border-bottom: 1px solid #e0e0e0; }
   .search-bar .input-group { max-width: 600px; }
 
-  /* ── Filters ── */
+  /* ── Filters (dropdowns; apply on change) ── */
   .filter-bar {
     background: #fff;
     padding: 8px 16px 10px;
     border-bottom: 1px solid #e0e0e0;
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-end;
   }
+  .filter-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin: 0;
+  }
+  .filter-field .form-select { min-width: 130px; }
+  .filter-label { font-size: .72rem; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+
   .filter-btn {
     border: 1px solid #ccc;
     background: #fff;
     border-radius: 20px;
-    padding: 4px 14px;
+    padding: 6px 14px;
     font-size: .82rem;
     cursor: pointer;
     transition: all .15s;
+    align-self: flex-end;
   }
   .filter-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
-  .filter-label { font-size: .78rem; color: #666; margin-right: 4px; }
 
-  /* ── Collapsible filters ── */
-  .filter-bar.filters-collapsed { display: none; }
-  #filterToggleBtn { position: relative; white-space: nowrap; }
-  #filterToggleBtn.has-active { border-color: var(--brand); color: var(--brand); }
-  .active-filter-dot {
-    position: absolute; top: 4px; right: 4px;
-    width: 8px; height: 8px; border-radius: 50%;
-    background: var(--accent);
-  }
-  /* On phones the label is hidden to save room; the icon + dot remain. */
   @media (max-width: 480px) {
-    .filter-toggle-label { display: none; }
+    .filter-field { flex: 1 1 45%; }
+    .filter-field .form-select { min-width: 0; width: 100%; }
   }
 
   /* ── Stats row ── */
@@ -503,40 +503,39 @@
       <button class="btn btn-outline-secondary" onclick="clearSearch()" title="Clear">
         <i class="bi bi-x"></i>
       </button>
-      <button class="btn btn-outline-secondary" id="filterToggleBtn" onclick="toggleFilters()" title="Filters">
-        <i class="bi bi-sliders"></i><span class="filter-toggle-label ms-1">Filters</span>
-        <span id="activeFilterDot" class="active-filter-dot" style="display:none"></span>
-      </button>
     </div>
   </div>
 
-  <!-- ══════════════ FILTERS ══════════════ -->
+  <!-- ══════════════ FILTERS (dropdowns; apply on change) ══════════════ -->
   <div class="filter-bar" id="filterBarEl">
-    <span class="filter-label">Language:</span>
-    <button class="filter-btn active" data-filter="language" data-value="" onclick="setFilter('language','',this)">All</button>
-    <button class="filter-btn" data-filter="language" data-value="marathi" onclick="setFilter('language','marathi',this)">Marathi</button>
-    <button class="filter-btn" data-filter="language" data-value="english" onclick="setFilter('language','english',this)">English</button>
+    <label class="filter-field">
+      <span class="filter-label">Language</span>
+      <select id="filterLanguage" class="form-select form-select-sm" onchange="onFilterChange('language', this.value)">
+        <option value="">All</option>
+        <option value="marathi">Marathi</option>
+        <option value="english">English</option>
+      </select>
+    </label>
 
-    <span class="filter-label ms-3">Age:</span>
-    <span id="ageGroupFilters">
-      <button class="filter-btn active" data-filter="ageGroup" data-value="" onclick="setFilter('ageGroup','',this)">All</button>
-    </span>
+    <label class="filter-field">
+      <span class="filter-label">Age</span>
+      <select id="filterAge" class="form-select form-select-sm" onchange="onFilterChange('ageGroup', this.value)">
+        <option value="">All</option>
+      </select>
+    </label>
 
-    <span class="filter-label ms-3">Other:</span>
-    <button class="filter-btn" data-filter="withImage" data-value="yes" onclick="toggleImageFilter(this)">
+    <label class="filter-field">
+      <span class="filter-label">Status</span>
+      <select id="filterStatus" class="form-select form-select-sm" onchange="onFilterChange('status', this.value)">
+        <option value="">All</option>
+        <option value="available">Available</option>
+        <option value="reserved">Reserved</option>
+        <option value="issued">Issued</option>
+      </select>
+    </label>
+
+    <button class="filter-btn" id="withImageBtn" data-filter="withImage" data-value="yes" onclick="toggleImageFilter(this)">
       <i class="bi bi-image me-1"></i>Has image
-    </button>
-
-    <span class="filter-label ms-3">Status:</span>
-    <button class="filter-btn active" data-filter="status" data-value="" onclick="setFilter('status','',this)">All</button>
-    <button class="filter-btn" data-filter="status" data-value="available" onclick="setFilter('status','available',this)">
-      <span class="text-success">●</span> Available
-    </button>
-    <button class="filter-btn" data-filter="status" data-value="reserved" onclick="setFilter('status','reserved',this)">
-      <span style="color:orange">●</span> Reserved
-    </button>
-    <button class="filter-btn" data-filter="status" data-value="issued" onclick="setFilter('status','issued',this)">
-      <span class="text-danger">●</span> Issued
     </button>
   </div>
 </div>
@@ -918,12 +917,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }, { rootMargin: '200px' });
   observer.observe(sentinel);
 
-  // Collapse the filter bar by default on phones (it takes too much vertical
-  // space); leave it open on larger screens where there's room.
-  if (window.matchMedia('(max-width: 480px)').matches) {
-    document.getElementById('filterBarEl').classList.add('filters-collapsed');
-  }
-
   // Action-banner dismiss button (listener is more reliable than inline onclick).
   const bannerClose = document.getElementById('actionBannerClose');
   if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
@@ -970,22 +963,12 @@ function applyFilters() {
 
   renderGrid();
   updateStats();
-  updateFilterIndicator_();
 }
 
-// Show/hide the filter bar (collapsed by default on mobile to save vertical space).
-function toggleFilters() {
-  document.getElementById('filterBarEl').classList.toggle('filters-collapsed');
-}
-
-// Reflect whether any non-default filter is active on the toggle button (dot +
-// highlight), so users know filters are applied even while collapsed.
-function updateFilterIndicator_() {
-  const active = Boolean(filters.language || filters.ageGroup || filters.status || filters.withImage);
-  const btn = document.getElementById('filterToggleBtn');
-  const dot = document.getElementById('activeFilterDot');
-  if (btn) btn.classList.toggle('has-active', active);
-  if (dot) dot.style.display = active ? '' : 'none';
+// Dropdown change → set the filter and apply immediately (no apply button).
+function onFilterChange(type, value) {
+  filters[type] = value;
+  applyFilters();
 }
 
 function debouncedSearch() {
@@ -996,29 +979,23 @@ function debouncedSearch() {
   }, 300);
 }
 
-function setFilter(type, value, el) {
-  filters[type] = value;
-  // Update active button
-  document.querySelectorAll('[data-filter="' + type + '"]').forEach(b => b.classList.remove('active'));
-  el.classList.add('active');
-  applyFilters();
-}
-
 function clearSearch() {
   document.getElementById('searchInput').value = '';
   filters.search = '';
   applyFilters();
 }
 
+// "Has image" is a toggle pill (not a dropdown); flip it and apply.
 function toggleImageFilter(el) {
   filters.withImage = !filters.withImage;
   el.classList.toggle('active', filters.withImage);
   applyFilters();
 }
 
+// Populate the Age dropdown from the age groups present in the collection.
 function renderAgeGroupFilters() {
-  const container = document.getElementById('ageGroupFilters');
-  if (!container) return;
+  const select = document.getElementById('filterAge');
+  if (!select) return;
 
   const groups = [];
   const seen = {};
@@ -1032,18 +1009,18 @@ function renderAgeGroupFilters() {
 
   groups.sort((a, b) => ageGroupSortKey(a.raw).localeCompare(ageGroupSortKey(b.raw), undefined, { numeric: true }));
 
-  container.innerHTML = `<button class="filter-btn active" data-filter="ageGroup" data-value="" onclick="setFilter('ageGroup','',this)">All</button>` +
-    groups.map(group =>
-      `<button class="filter-btn" data-filter="ageGroup" data-value="${escAttr(group.value)}" onclick="setFilter('ageGroup','${escAttr(group.value)}',this)">${escHtml(group.label)}</button>`
-    ).join('');
+  const current = filters.ageGroup || '';
+  select.innerHTML = `<option value="">All</option>` +
+    groups.map(g => `<option value="${escAttr(g.value)}">${escHtml(g.label)}</option>`).join('');
+  select.value = current; // keep any prior selection if still valid
 }
 
 function resetFilters() {
   filters = { language: '', ageGroup: '', status: '', search: '', withImage: false };
-  document.querySelectorAll('.filter-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.value === '');
-  });
-  document.querySelector('[data-filter="withImage"]').classList.remove('active');
+  const lang = document.getElementById('filterLanguage'); if (lang) lang.value = '';
+  const age  = document.getElementById('filterAge');      if (age)  age.value = '';
+  const stat = document.getElementById('filterStatus');   if (stat) stat.value = '';
+  const img  = document.getElementById('withImageBtn');   if (img)  img.classList.remove('active');
   applyFilters();
 }
 

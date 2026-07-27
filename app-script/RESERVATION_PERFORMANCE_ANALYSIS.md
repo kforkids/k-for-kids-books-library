@@ -4,7 +4,20 @@
 
 **Symptom:** A single reservation takes **3+ seconds**.
 
-**Status:** Round 20 — single login form for admin + customer; invite code behind a link. Runtime confirmation pending.
+**Status:** Round 21 — filter UX: removable active-filter chips + filter panel with live count. Runtime confirmation pending.
+
+---
+
+## Round 21 — chips + filter panel (declutter the filters)
+
+**Problem:** the four filter groups (Language / Age / Status / Has-image) rendered as pill rows that wrapped onto 3–4 lines on mobile — cluttered, ate ~half the screen.
+
+**Fix (client only, `Index.html`):**
+- **Active-filter chips** under the search bar — each active filter shows as a removable chip (e.g. `Marathi ✕`, `Available ✕`, `Has image ✕`) plus a `Clear all` when >1. Always visible, even when the filter panel is collapsed, so the user always sees and can one-tap-remove what's applied. This is the main "wow."
+- **Filter panel** — the existing collapsible `#filterBarEl` gained a header (title + Clear all) and a green **"Show N books"** apply button whose count updates live as filters change.
+- Default view is now: search + Filters button + any chips. On mobile the panel stays collapsed by default (round 19), so filters no longer dominate the screen.
+
+New JS: `renderFilterChips`, `filterChipLabel_`, `setFilterValue_` (programmatic pill sync), `removeFilter`, `clearAllFilters`, `updateFilterResultCount_`; all driven from `applyFilters`. Verified in-browser: chips render/remove correctly and stay visible while the panel is collapsed.
 
 ---
 
