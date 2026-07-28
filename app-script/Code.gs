@@ -1746,6 +1746,174 @@ function generateInviteCodeForCustomer(customerId, adminCredential) {
   }
 }
 
+// ─────────────────────────────────────────────
+// Password reset — two paths, both keyed on the customer's EMAIL:
+//   (a) Admin generates a reset code (shared over WhatsApp). Stored as a hash in
+//       the sheet's Invite Code Hash column, marked Invite Status = 'Reset'.
+//   (b) Self-serve email OTP: a 6-digit code emailed to the customer, stored
+//       hashed in the script cache with a 10-minute expiry.
+// The customer enters email + code + new password; resetPassword() accepts EITHER
+// a valid OTP or a valid admin reset code.
+// ─────────────────────────────────────────────
+const OTP_TTL_SECS = 600;            // 10 minutes
+const RESET_CODE_TTL_SECS = 86400;   // admin reset code good for 24h (advisory)
+
+function passwordOtpKey_(email) {
+  return 'PWOTP_' + sha256Hex_(normalizeEmail_(email));
+}
+
+/** Admin: generate a one-time reset code for a customer to set a new password. */
+function generatePasswordResetCode(customerId, adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) {
+      return { success: false, error: 'Admin session expired. Please log in again.' };
+    }
+    customerId = trim_(customerId).toUpperCase();
+    if (!customerId) return { success: false, error: 'Customer ID is required.' };
+
+    const details = getCustomerDetailsSheetAndColumns_();
+    const data = details.sheet.getDataRange().getValues();
+    const rowInfo = findCustomerDetailsRow_(data, details.headerRow, details.columns, { customerId });
+    if (!rowInfo) return { success: false, error: 'Customer account not found.' };
+
+    const row = rowInfo.values.slice();
+    const email = normalizeEmail_(row[details.columns.email]);
+    if (!email) return { success: false, error: 'This customer has no email on file. Add an email first.' };
+
+    const resetCode = generateInviteCode_();
+    const now = new Date();
+    row[details.columns.inviteCodeHash] = hashInviteCode_(customerId, resetCode);
+    if (details.columns.inviteCodeExpiresAt !== -1) {
+      row[details.columns.inviteCodeExpiresAt] = new Date(now.getTime() + RESET_CODE_TTL_SECS * 1000);
+    }
+    row[details.columns.inviteStatus] = 'Reset';
+    writeCustomerDetailsRow_(details.sheet, rowInfo.rowNumber, row);
+
+    return {
+      success: true,
+      customerId,
+      name: trim_(row[details.columns.name]),
+      email,
+      resetCode,
+      message: 'Reset code for ' + trim_(row[details.columns.name]) + ' (' + email + '): ' + resetCode
+    };
+  } catch (err) {
+    return reportError_('generatePasswordResetCode', err, adminCredential);
+  }
+}
+
+/** Self-serve: email a 6-digit OTP to the customer's address. */
+function requestPasswordOtp(email) {
+  try {
+    if (!checkRateLimit_('pw-otp-request', 5, 900)) {
+      return { success: false, error: rateLimitMessage_('Too many reset requests.') };
+    }
+    email = normalizeEmail_(email);
+    // Generic response either way — never reveal whether an email is registered.
+    const generic = { success: true, message: 'If that email is registered, a 6-digit reset code is on its way.' };
+    if (!email) return { success: false, error: 'Please enter your email address.' };
+
+    const details = getCustomerDetailsSheetAndColumns_();
+    const data = details.sheet.getDataRange().getValues();
+    const rowInfo = findCustomerDetailsRow_(data, details.headerRow, details.columns, { email });
+    if (!rowInfo) return generic;
+
+    const otp = String(Math.floor(100000 + Math.random() * 900000)); // 6 digits
+    const payload = sha256Hex_(otp) + '|' + (Date.now() + OTP_TTL_SECS * 1000);
+    CacheService.getScriptCache().put(passwordOtpKey_(email), payload, OTP_TTL_SECS);
+
+    const name = trim_(rowInfo.values[details.columns.name]) || 'there';
+    sendPasswordOtpEmail_(email, name, otp);
+    return generic;
+  } catch (err) {
+    return reportError_('requestPasswordOtp', err);
+  }
+}
+
+function sendPasswordOtpEmail_(email, name, otp) {
+  const subject = 'Your K for Kids Library password reset code';
+  const body =
+    'Hi ' + name + ',\n\n' +
+    'Your password reset code is: ' + otp + '\n\n' +
+    'Enter it in the app along with your new password. This code expires in 10 minutes.\n' +
+    'If you did not request this, you can ignore this email.\n\n' +
+    '— K for Kids Library';
+  MailApp.sendEmail(email, subject, body);
+}
+
+/**
+ * Reset a password using email + code + new password. Accepts EITHER a valid
+ * emailed OTP (from requestPasswordOtp) OR the admin-generated reset code. On
+ * success the new password is set and both code paths are invalidated.
+ */
+function resetPassword(email, code, newPassword) {
+  try {
+    if (!checkRateLimit_('pw-reset', 10, 900)) {
+      return { success: false, error: rateLimitMessage_('Too many reset attempts.') };
+    }
+    email = normalizeEmail_(email);
+    code = trim_(code);
+    if (!email || !code) return { success: false, error: 'Email and reset code are required.' };
+    if (!newPassword || String(newPassword).length < 8) {
+      return { success: false, error: 'Password must be at least 8 characters.' };
+    }
+
+    const details = getCustomerDetailsSheetAndColumns_();
+    const data = details.sheet.getDataRange().getValues();
+    const rowInfo = findCustomerDetailsRow_(data, details.headerRow, details.columns, { email });
+    if (!rowInfo) return { success: false, error: 'Invalid email or reset code.' };
+
+    const row = rowInfo.values.slice();
+    const customerId = trim_(row[details.columns.customerId]);
+
+    // Path (a): emailed OTP (cache).
+    const cache = CacheService.getScriptCache();
+    const otpKey = passwordOtpKey_(email);
+    const otpRaw = cache.get(otpKey);
+    let otpValid = false;
+    if (otpRaw) {
+      const parts = otpRaw.split('|');
+      const otpHash = parts[0];
+      const expiresAt = parseInt(parts[1], 10) || 0;
+      if (Date.now() <= expiresAt && sha256Hex_(code) === otpHash) otpValid = true;
+    }
+
+    // Path (b): admin reset code (sheet hash).
+    const storedHash = trim_(row[details.columns.inviteCodeHash]);
+    let adminCodeValid = Boolean(storedHash) && storedHash === hashInviteCode_(customerId, trim_(code).toUpperCase());
+    if (adminCodeValid && details.columns.inviteCodeExpiresAt !== -1) {
+      const exp = row[details.columns.inviteCodeExpiresAt];
+      if (exp && new Date(exp).getTime() < Date.now()) adminCodeValid = false; // expired
+    }
+
+    if (!otpValid && !adminCodeValid) {
+      return { success: false, error: 'Invalid or expired reset code.' };
+    }
+
+    // Set the new password and invalidate both code paths.
+    const salt = Utilities.getUuid();
+    row[details.columns.passwordSalt] = salt;
+    row[details.columns.passwordHash] = hashPassword_(newPassword, salt);
+    row[details.columns.authMethod] = 'password';
+    row[details.columns.inviteCodeHash] = '';
+    if (details.columns.inviteCodeExpiresAt !== -1) row[details.columns.inviteCodeExpiresAt] = '';
+    row[details.columns.inviteStatus] = 'Claimed';
+    row[details.columns.lastLoginAt] = new Date();
+    writeCustomerDetailsRow_(details.sheet, rowInfo.rowNumber, row);
+    cache.remove(otpKey);
+
+    const token = createCustomerSession_(row, details.columns);
+    return {
+      success: true,
+      token,
+      customer: publicCustomerFromRow_(row, details.columns),
+      message: 'Your password has been reset. You are now logged in.'
+    };
+  } catch (err) {
+    return reportError_('resetPassword', err);
+  }
+}
+
 function generateInviteCodesForAllCustomers(adminCredential) {
   try {
     if (!canRunSetup_(adminCredential)) {
@@ -2190,13 +2358,18 @@ function writeCustomerDetailsRow_(sheet, rowNumber, rowValues) {
 }
 
 function validateCustomerAuthInputs_(email, phone, password) {
-  if (!email && !phone) {
-    return { success: false, error: 'Please enter either an email address or phone number.' };
+  // Both email AND phone are mandatory. Email is the login username; phone is
+  // kept for contact / WhatsApp. Applies to self-signup and invite-code claim.
+  if (!email) {
+    return { success: false, error: 'Email address is required.' };
   }
-  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { success: false, error: 'Please enter a valid email address.' };
   }
-  if (phone && phone.length < 10) {
+  if (!phone) {
+    return { success: false, error: 'Phone number is required.' };
+  }
+  if (phone.length < 10) {
     return { success: false, error: 'Please enter a valid phone number.' };
   }
   if (!password || String(password).length < 8) {

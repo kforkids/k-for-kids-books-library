@@ -976,6 +976,9 @@
             <a href="#" onclick="showRegisterPane(event)"><b>New here? Sign up</b></a>
             <a href="#" onclick="showInvitePane(event)">Have an invite code?</a>
           </div>
+          <div class="small mt-1">
+            <a href="#" onclick="openResetPassword(event)">Forgot password?</a>
+          </div>
         </div>
 
         <!-- ── REGISTER (self-signup): new subscribers create an account ── -->
@@ -984,18 +987,17 @@
             Create your free account to browse the whole library. You'll be able to reserve books once the library admin activates your subscription.
           </div>
           <div class="mb-3">
-            <label class="form-label" for="registerName">Name</label>
+            <label class="form-label" for="registerName">Name <span class="text-danger">*</span></label>
             <input type="text" id="registerName" class="form-control" autocomplete="name" placeholder="Your full name">
           </div>
           <div class="mb-3">
-            <label class="form-label" for="registerPhone">Phone</label>
-            <input type="tel" id="registerPhone" class="form-control" autocomplete="tel" placeholder="Mobile number">
-          </div>
-          <div class="mb-3">
-            <label class="form-label" for="registerEmail">Email</label>
+            <label class="form-label" for="registerEmail">Email <span class="text-danger">*</span> <span class="text-muted">(your login)</span></label>
             <input type="email" id="registerEmail" class="form-control" autocomplete="email" placeholder="you@example.com">
           </div>
-          <div class="form-text mb-2" style="margin-top:-8px">Enter at least an email or a phone number.</div>
+          <div class="mb-3">
+            <label class="form-label" for="registerPhone">Phone <span class="text-danger">*</span></label>
+            <input type="tel" id="registerPhone" class="form-control" autocomplete="tel" placeholder="Mobile number">
+          </div>
           <div class="mb-2">
             <label class="form-label" for="registerPassword">Create Password</label>
             <input type="password" id="registerPassword" class="form-control" autocomplete="new-password"
@@ -1010,7 +1012,7 @@
         <!-- ── JOIN WITH INVITE CODE (revealed via the link above) ── -->
         <div id="claimPane" style="display:none">
           <div class="alert alert-info py-2 small">
-            Use the Customer ID and invite code shared by the admin, then add an email or phone number and create a password.
+            Use the Customer ID and invite code shared by the admin, then add your email and phone and create a password. Your email is your login.
           </div>
           <div class="mb-3">
             <label class="form-label">Customer ID</label>
@@ -1021,12 +1023,12 @@
             <input type="text" id="claimInviteCode" class="form-control" placeholder="KFK-XXXXX-XXXXX" autocomplete="one-time-code">
           </div>
           <div class="mb-3">
-            <label class="form-label">Email <span class="text-muted">(email or phone required)</span></label>
-            <input type="email" id="claimEmail" class="form-control" autocomplete="email">
+            <label class="form-label">Email <span class="text-danger">*</span> <span class="text-muted">(your login)</span></label>
+            <input type="email" id="claimEmail" class="form-control" autocomplete="email" placeholder="you@example.com">
           </div>
           <div class="mb-3">
-            <label class="form-label">Phone <span class="text-muted">(email or phone required)</span></label>
-            <input type="tel" id="claimPhone" class="form-control" autocomplete="tel">
+            <label class="form-label">Phone <span class="text-danger">*</span></label>
+            <input type="tel" id="claimPhone" class="form-control" autocomplete="tel" placeholder="Mobile number">
           </div>
           <div class="mb-2">
             <label class="form-label">Create Password</label>
@@ -1201,6 +1203,71 @@
   </div>
 </div>
 
+<!-- ══════════════ RESET PASSWORD MODAL ══════════════ -->
+<div class="modal fade" id="resetModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-white"><i class="bi bi-key me-2"></i>Reset password</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" style="filter:invert(1)"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label" for="resetEmail">Email</label>
+          <input type="email" id="resetEmail" class="form-control" autocomplete="email" placeholder="you@example.com">
+        </div>
+        <div class="small mb-2" id="resetHint">
+          Enter your email and we'll send you a 6-digit reset code. If the library
+          admin gave you a reset code over WhatsApp, enter that below instead.
+        </div>
+        <button type="button" class="btn btn-outline-success btn-sm mb-3" id="resetSendBtn" onclick="sendResetCode()">
+          <i class="bi bi-envelope me-1"></i>Email me a code
+        </button>
+        <div class="mb-3">
+          <label class="form-label" for="resetCode">Reset code</label>
+          <input type="text" id="resetCode" class="form-control" autocomplete="one-time-code" placeholder="6-digit code or code from admin">
+        </div>
+        <div class="mb-2">
+          <label class="form-label" for="resetNewPassword">New password</label>
+          <input type="password" id="resetNewPassword" class="form-control" autocomplete="new-password"
+                 onkeydown="if(event.key==='Enter') submitResetPassword()">
+          <div class="form-text">Use at least 8 characters.</div>
+        </div>
+        <div class="small"><a href="#" onclick="backToLoginFromReset(event)">← Back to login</a></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="resetSubmitBtn" onclick="submitResetPassword()">
+          <i class="bi bi-check2 me-1"></i>Reset password
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════ ADMIN RESET-CODE MODAL (shows generated code) ══════════════ -->
+<div class="modal fade" id="adminResetCodeModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-white"><i class="bi bi-key me-2"></i>Password reset code</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" style="filter:invert(1)"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-2">Share this one-time code with <b id="adminResetCustName"></b> (e.g. over WhatsApp). They enter their email + this code in <b>Forgot password</b> to set a new password.</p>
+        <div class="d-flex align-items-center gap-2 mb-2">
+          <code id="adminResetCodeValue" style="font-size:1.1rem;background:#f1f3f1;padding:6px 12px;border-radius:8px;flex:1"></code>
+          <button class="btn btn-outline-secondary btn-sm" onclick="copyAdminResetCode()" title="Copy"><i class="bi bi-clipboard"></i></button>
+        </div>
+        <div class="small text-muted"><i class="bi bi-info-circle me-1"></i>Valid for 24 hours. Generating a new code replaces this one.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Done</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ TOAST ══════════════ -->
 <div class="toast-container">
   <div id="appToast" class="toast align-items-center border-0 text-white" role="alert" style="min-width:280px">
@@ -1249,6 +1316,8 @@ const customerAuthModal = new bootstrap.Modal('#customerAuthModal');
 const limitModal = new bootstrap.Modal('#limitModal');
 const confirmModal = new bootstrap.Modal('#confirmModal');
 const approveModal = new bootstrap.Modal('#approveModal');
+const resetModal = new bootstrap.Modal('#resetModal');
+const adminResetCodeModal = new bootstrap.Modal('#adminResetCodeModal');
 let pendingReserveBookNo = '';
 let approveCustomerId = ''; // customer currently being approved in the modal
 
@@ -1275,7 +1344,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusBtn = event.target.closest('.update-status-btn');
     if (statusBtn) { doUpdateStatus(statusBtn.dataset.customerName, Number(statusBtn.dataset.customerIdx)); return; }
     const approveBtn = event.target.closest('.approve-customer-btn');
-    if (approveBtn) doApproveCustomer(approveBtn.dataset.customerId, approveBtn.dataset.customerName);
+    if (approveBtn) { doApproveCustomer(approveBtn.dataset.customerId, approveBtn.dataset.customerName); return; }
+    const resetBtn = event.target.closest('.reset-pw-btn');
+    if (resetBtn) doGenerateResetCode(resetBtn.dataset.customerId, resetBtn.dataset.customerName);
   });
 
   // Infinite scroll: load more books when sentinel comes into view
@@ -2607,8 +2678,8 @@ function claimExistingCustomer() {
   const phone = document.getElementById('claimPhone').value.trim();
   const password = document.getElementById('claimPassword').value;
 
-  if (!customerId || !inviteCode || (!email && !phone) || !password) {
-    showToast('Customer ID, invite code, email or phone, and password are required.', 'warning');
+  if (!customerId || !inviteCode || !email || !phone || !password) {
+    showToast('Customer ID, invite code, email, phone, and password are all required.', 'warning');
     return;
   }
 
@@ -2630,7 +2701,8 @@ function selfSignupCustomer() {
   const password = document.getElementById('registerPassword').value;
 
   if (!name) { showToast('Please enter your name.', 'warning'); return; }
-  if (!email && !phone) { showToast('Enter at least an email or a phone number.', 'warning'); return; }
+  if (!email) { showToast('Email is required — it will be your login.', 'warning'); return; }
+  if (!phone) { showToast('Phone number is required.', 'warning'); return; }
   if (!password || password.length < 8) { showToast('Password must be at least 8 characters.', 'warning'); return; }
 
   setButtonLoading('customerAuthModal', true);
@@ -2670,6 +2742,74 @@ function handleCustomerAuthResponse(res) {
   } else {
     showToast((res && res.error) || 'Login failed.', 'danger');
   }
+}
+
+// ── Password reset (self-serve email OTP + admin reset code) ──
+function openResetPassword(e) {
+  if (e) e.preventDefault();
+  document.getElementById('resetEmail').value =
+    document.getElementById('loginIdentifier').value.trim() || '';
+  document.getElementById('resetCode').value = '';
+  document.getElementById('resetNewPassword').value = '';
+  customerAuthModal.hide();
+  setTimeout(() => resetModal.show(), 250);
+}
+
+function backToLoginFromReset(e) {
+  if (e) e.preventDefault();
+  resetModal.hide();
+  setTimeout(() => openCustomerAuth(), 250);
+}
+
+// Step 1: email a 6-digit code to the entered address.
+function sendResetCode() {
+  const email = document.getElementById('resetEmail').value.trim();
+  if (!email) { showToast('Enter your email first.', 'warning'); return; }
+  const btn = document.getElementById('resetSendBtn');
+  setInlineButtonLoading(btn, true, 'Sending…');
+  google.script.run
+    .withSuccessHandler(res => {
+      setInlineButtonLoading(btn, false);
+      showToast((res && res.message) || 'If that email is registered, a code is on its way.', res && res.success ? 'success' : 'danger');
+    })
+    .withFailureHandler(() => {
+      setInlineButtonLoading(btn, false);
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .requestPasswordOtp(email);
+}
+
+// Step 2: submit email + code + new password. Backend accepts an emailed OTP or
+// the admin-generated reset code.
+function submitResetPassword() {
+  const email = document.getElementById('resetEmail').value.trim();
+  const code = document.getElementById('resetCode').value.trim();
+  const newPassword = document.getElementById('resetNewPassword').value;
+  if (!email) { showToast('Enter your email.', 'warning'); return; }
+  if (!code) { showToast('Enter the reset code.', 'warning'); return; }
+  if (!newPassword || newPassword.length < 8) { showToast('New password must be at least 8 characters.', 'warning'); return; }
+
+  setButtonLoading('resetModal', true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setButtonLoading('resetModal', false);
+      if (res && res.success && res.token && res.customer) {
+        customerToken = res.token;
+        currentCustomer = res.customer;
+        localStorage.setItem('kfkCustomerToken', customerToken);
+        resetModal.hide();
+        renderCustomerState();
+        loadBooks();
+        showToast(res.message || 'Password reset. You are logged in.', 'success');
+      } else {
+        showToast((res && res.error) || 'Reset failed.', 'danger');
+      }
+    })
+    .withFailureHandler(() => {
+      setButtonLoading('resetModal', false);
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .resetPassword(email, code, newPassword);
 }
 
 function logoutCustomer() {
@@ -3114,8 +3254,13 @@ function renderCustomers(list) {
              <option ${c.status==='Closed'   ? 'selected' : ''}>Closed</option>
            </select>
            <button class="btn btn-sm btn-outline-warning update-status-btn"
-                   data-customer-name="${escAttr(c.name)}" data-customer-idx="${idx}">
+                   data-customer-name="${escAttr(c.name)}" data-customer-idx="${idx}" title="Update status">
              <i class="bi bi-check2"></i>
+           </button>
+           <button class="btn btn-sm btn-outline-secondary reset-pw-btn"
+                   data-customer-id="${escAttr(c.customerId)}" data-customer-name="${escAttr(c.name)}"
+                   title="Generate password reset code"${c.email ? '' : ' disabled'}>
+             <i class="bi bi-key"></i>
            </button>
          </div>`;
 
@@ -3181,6 +3326,36 @@ function submitApproveCustomer() {
       showToast('Something went wrong. Please try again.', 'danger');
     })
     .approveCustomer(approveCustomerId, plan, limit, adminToken);
+}
+
+// Admin: generate a one-time password-reset code for a customer, then show it in
+// a modal to share (e.g. over WhatsApp).
+function doGenerateResetCode(customerId, customerName) {
+  if (!customerId) { showToast('Missing customer id.', 'danger'); return; }
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res && res.success) {
+        document.getElementById('adminResetCustName').textContent = res.name || customerName || customerId;
+        document.getElementById('adminResetCodeValue').textContent = res.resetCode;
+        adminResetCodeModal.show();
+      } else {
+        showToast((res && res.error) || 'Could not generate reset code.', 'danger');
+      }
+    })
+    .withFailureHandler(() => showToast('Something went wrong. Please try again.', 'danger'))
+    .generatePasswordResetCode(customerId, adminToken);
+}
+
+function copyAdminResetCode() {
+  const code = document.getElementById('adminResetCodeValue').textContent;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(code).then(
+      () => showToast('Reset code copied.', 'success'),
+      () => showToast('Copy failed — select and copy manually.', 'warning')
+    );
+  } else {
+    showToast('Copy not supported — select and copy manually.', 'warning');
+  }
 }
 
 function toggleAddForm() {
