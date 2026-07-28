@@ -688,6 +688,12 @@ const CHUNK_SIZE        = 90000; // bytes per CacheService entry (limit 100 KB)
 const ADMIN_SESSION_SECS = 7200; // 2 hours
 const CUSTOMER_SESSION_SECS = 21600; // 6 hours, CacheService max TTL
 
+// Non-logged-in (anonymous) visitors see only a preview of the catalog. The full
+// collection is gated behind login/registration. This keeps the anonymous page
+// light (we never ship ~2000 rows to a non-member's browser) and gives people a
+// concrete reason to sign in. Logged-in customers and admins always see all books.
+const ANON_BOOK_LIMIT = 48;
+
 function getCachedPublicBooks_() {
   const cache  = CacheService.getScriptCache();
   const meta   = cache.get(BOOKS_CACHE_KEY + '_META');
@@ -729,11 +735,17 @@ function getBooks(filters, adminCredential, customerToken) {
     resetRequestCache_();
     const isAdmin = adminCredential ? verifyAdminCredential_(adminCredential) : false;
     const currentCustomer = customerToken ? verifyCustomerSession_(customerToken) : null;
+    // Anonymous = neither admin nor a logged-in customer. Anonymous visitors get
+    // a capped preview of the catalog; everyone signed in sees the full list.
+    const isAnonymous = !isAdmin && !currentCustomer;
 
-    // Serve public books from cache when possible (admin always bypasses cache)
+    // Serve public books from cache when possible (admin always bypasses cache).
+    // The cache holds the FULL public list; anonymous responses are capped on the
+    // way out via anonBooksResponse_ so the preview limit is applied consistently
+    // whether we hit the cache or rebuild from the sheet.
     if (!isAdmin && !customerToken && !filters) {
       const cached = getCachedPublicBooks_();
-      if (cached) return { success: true, books: cached };
+      if (cached) return anonBooksResponse_(cached);
     }
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
@@ -846,15 +858,36 @@ function getBooks(filters, adminCredential, customerToken) {
       });
     }
 
-    // Cache public result for future visitors
+    // Cache the FULL public result for future visitors (capping happens on the
+    // way out, so the cache stays a complete snapshot).
     if (!isAdmin && !customerToken && !filters) {
       try { setCachedPublicBooks_(books); } catch(e) { /* non-fatal */ }
     }
 
+    if (isAnonymous) return anonBooksResponse_(books);
     return { success: true, books };
   } catch (err) {
     return reportError_('getBooks', err, adminCredential);
   }
+}
+
+/**
+ * Build the getBooks response for an anonymous visitor: cap the list to
+ * ANON_BOOK_LIMIT and report the true total so the client can show a "showing X
+ * of N — log in to see all" prompt. Applied to both the cache-hit and freshly
+ * built paths so the preview limit is enforced in one place.
+ */
+function anonBooksResponse_(books) {
+  const list = Array.isArray(books) ? books : [];
+  const total = list.length;
+  const capped = total > ANON_BOOK_LIMIT;
+  return {
+    success: true,
+    books: capped ? list.slice(0, ANON_BOOK_LIMIT) : list,
+    totalCount: total,
+    capped: capped,
+    previewLimit: ANON_BOOK_LIMIT
+  };
 }
 
 function warmImageCache() {
@@ -946,10 +979,25 @@ function reserveBookForCustomer(bookNo, customerToken) {
     // PERF: use the session-cached customer for the limit check — NO Customer-
     // Details sheet open on the hot path. The session already carries
     // accountStatus, monthlyReservationLimit and activeReservationCount.
-    const customer = sessionCustomer;
+    let customer = sessionCustomer;
 
     if (trim_(customer.accountStatus).toLowerCase() !== 'active') {
-      return { success: false, error: 'Your account is not active yet. Please contact the library admin.' };
+      // The session snapshot can lag behind an admin approval (sessions live up
+      // to 6h). Before rejecting, re-read the authoritative row from the sheet —
+      // if the admin has since approved this customer, refresh the session and
+      // let the reservation proceed. This is off the hot path (only pending /
+      // inactive customers pay this cost).
+      const context = getCustomerRowContextById_(customer.customerId);
+      if (context && trim_(context.customer.accountStatus).toLowerCase() === 'active') {
+        customer = context.customer;
+        sessionCustomer.accountStatus = customer.accountStatus;
+        sessionCustomer.subscriptionStatus = customer.subscriptionStatus;
+        sessionCustomer.subscriptionPlan = customer.subscriptionPlan;
+        sessionCustomer.monthlyReservationLimit = customer.monthlyReservationLimit;
+        persistSession_(customerToken, sessionCustomer);
+      } else {
+        return { success: false, error: 'Your account is pending approval. You can reserve books once the library admin activates your subscription.' };
+      }
     }
 
     const monthlyLimit = parseMonthlyReservationLimit_(customer);
@@ -1478,6 +1526,91 @@ function claimExistingCustomer(customerId, inviteCode, email, password, phone) {
   }
 }
 
+/**
+ * Public self-signup: a new visitor registers with name, phone, email and a
+ * password. The account is created in a PENDING state — it can log in and browse
+ * the full catalog immediately, but cannot reserve books until an admin approves
+ * it (Account Status → Active). Returns a session token so the user is logged in
+ * right after signing up.
+ */
+function selfSignupCustomer(name, email, phone, password) {
+  try {
+    if (!checkRateLimit_('customer-signup', 6, 300)) {
+      return { success: false, error: rateLimitMessage_('Too many sign-up attempts.') };
+    }
+
+    name = trim_(name);
+    email = normalizeEmail_(email);
+    phone = normalizePhone_(phone);
+
+    if (!name) return { success: false, error: 'Please enter your name.' };
+    const validation = validateCustomerAuthInputs_(email, phone, password);
+    if (!validation.success) return validation;
+
+    const lock = LockService.getScriptLock();
+    lock.waitLock(5000);
+    try {
+      const details = getCustomerDetailsSheetAndColumns_();
+      const columns = details.columns;
+      const data = details.sheet.getDataRange().getValues();
+
+      // Reject duplicates so signups don't fork an existing customer's account.
+      if (email && findCustomerDetailsRow_(data, details.headerRow, columns, { email })) {
+        return { success: false, error: 'An account with this email already exists. Please log in instead.' };
+      }
+      if (phone && findCustomerDetailsRow_(data, details.headerRow, columns, { phone })) {
+        return { success: false, error: 'An account with this phone number already exists. Please log in instead.' };
+      }
+
+      // Unique Customer ID from the names already present.
+      const usedCustomerIds = {};
+      for (let i = details.headerRow + 1; i < data.length; i++) {
+        const id = trim_(data[i][columns.customerId]);
+        if (id) usedCustomerIds[id] = true;
+      }
+      const customerId = generateCustomerId_(name, usedCustomerIds);
+
+      const now = new Date();
+      const salt = Utilities.getUuid();
+      const width = details.sheet.getLastColumn();
+      const row = new Array(width).fill('');
+
+      row[columns.customerId] = customerId;
+      row[columns.name] = name;
+      row[columns.email] = email;
+      if (columns.phone !== -1) row[columns.phone] = phone;
+      // PENDING until an admin approves — reserveBookForCustomer gates on this.
+      row[columns.accountStatus] = 'Pending';
+      row[columns.subscriptionStatus] = 'Pending';
+      if (columns.activeReservationCount !== -1) row[columns.activeReservationCount] = 0;
+      row[columns.authMethod] = 'password';
+      row[columns.passwordSalt] = salt;
+      row[columns.passwordHash] = hashPassword_(password, salt);
+      row[columns.inviteStatus] = 'Self-Signup';
+      row[columns.claimedAt] = now;
+      row[columns.lastLoginAt] = now;
+
+      // Stamp Created At if that column exists (not part of the auth column set).
+      const createdAtCol = getHeaderIndex_(getHeaderMap_(data[details.headerRow]), 'Created At');
+      if (createdAtCol !== -1) row[createdAtCol] = now;
+
+      details.sheet.appendRow(row);
+
+      const token = createCustomerSession_(row, columns);
+      return {
+        success: true,
+        token,
+        customer: publicCustomerFromRow_(row, columns),
+        message: 'Welcome! Your account is pending approval — you can browse all books now, and reserve once approved.'
+      };
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (err) {
+    return reportError_('selfSignupCustomer', err);
+  }
+}
+
 // Unified login entry: one form for both admins and customers. Tries admin
 // credentials first (ADMIN_USERNAME + ADMIN_PASSWORD); otherwise falls through
 // to customer login. Returns `role: 'admin' | 'customer'` so the client knows
@@ -1664,6 +1797,11 @@ function getCustomerAdminColumns_(headerMap) {
     location:                getHeaderIndex_(headerMap, 'Location'),
     address:                 getHeaderIndex_(headerMap, 'Address'),
     accountStatus:           getHeaderIndex_(headerMap, 'Account Status'),
+    subscriptionStatus:      getHeaderIndex_(headerMap, 'Subscription Status'),
+    subscriptionPlan:        getHeaderIndex_(headerMap, 'Subscription Plan'),
+    email:                   getHeaderIndex_(headerMap, 'Email'),
+    phone:                   getHeaderIndex_(headerMap, 'Phone'),
+    inviteStatus:            getHeaderIndex_(headerMap, 'Invite Status'),
     tillDateSum:             getHeaderIndex_(headerMap, 'Till Date Sum'),
     monthlyReservationLimit: getHeaderIndex_(headerMap, 'Monthly Reservation Limit'),
     activeReservationCount:  getHeaderIndex_(headerMap, 'Active Reservation Count'),
@@ -1695,6 +1833,11 @@ function getCustomers(adminCredential) {
         location:                trim_(getRowValue_(data[i], cols.location)),
         address:                 trim_(getRowValue_(data[i], cols.address)),
         status:                  trim_(getRowValue_(data[i], cols.accountStatus)) || 'Active',
+        subscriptionStatus:      cols.subscriptionStatus === -1 ? '' : trim_(getRowValue_(data[i], cols.subscriptionStatus)),
+        subscriptionPlan:        cols.subscriptionPlan === -1 ? '' : trim_(getRowValue_(data[i], cols.subscriptionPlan)),
+        email:                   cols.email === -1 ? '' : trim_(getRowValue_(data[i], cols.email)),
+        phone:                   cols.phone === -1 ? '' : trim_(getRowValue_(data[i], cols.phone)),
+        inviteStatus:            cols.inviteStatus === -1 ? '' : trim_(getRowValue_(data[i], cols.inviteStatus)),
         tillDateSum:             trim_(getRowValue_(data[i], cols.tillDateSum)),
         monthlyReservationLimit: trim_(getRowValue_(data[i], cols.monthlyReservationLimit)),
         activeReservationCount:  trim_(getRowValue_(data[i], cols.activeReservationCount))
@@ -1759,6 +1902,45 @@ function addCustomer(name, dateStart, location, address, adminCredential) {
     };
   } catch (err) {
     return reportError_('addCustomer', err, adminCredential);
+  }
+}
+
+/**
+ * Approve a self-signup (or otherwise pending) customer. Flips Account Status to
+ * Active and Subscription Status to Active, sets the plan + monthly reservation
+ * limit, and stamps Approved At. After this the customer can reserve books; their
+ * cached session picks up the change lazily via the sheet re-check in
+ * reserveBookForCustomer (no forced re-login needed).
+ */
+function approveCustomer(customerId, subscriptionPlan, monthlyLimit, adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
+    customerId = trim_(customerId);
+    if (!customerId) return { success: false, error: 'Customer ID is required.' };
+
+    const limit = parseInt(monthlyLimit, 10);
+    if (!(limit > 0)) return { success: false, error: 'Please set a positive monthly reservation limit.' };
+
+    const details = getCustomerDetailsSheetAndColumns_();
+    const columns = details.columns;
+    const rowNumber = findDataRowByExactValue_(details.sheet, details.headerRow, columns.customerId, customerId);
+    if (!rowNumber) return { success: false, error: 'Customer not found.' };
+
+    const row = getSheetRowValues_(details.sheet, rowNumber);
+    row[columns.accountStatus] = 'Active';
+    row[columns.subscriptionStatus] = 'Active';
+    if (columns.subscriptionPlan !== -1) row[columns.subscriptionPlan] = trim_(subscriptionPlan);
+    if (columns.monthlyReservationLimit !== -1) row[columns.monthlyReservationLimit] = limit;
+
+    // Stamp Approved At if the column exists.
+    const headerMap = getHeaderMap_(getSheetRowValues_(details.sheet, details.headerRow + 1));
+    const approvedAtCol = getHeaderIndex_(headerMap, 'Approved At');
+    if (approvedAtCol !== -1) row[approvedAtCol] = new Date();
+
+    setSheetRowValues_(details.sheet, rowNumber, row);
+    return { success: true, message: '✅ ' + trim_(row[columns.name]) + ' approved (limit ' + limit + '/month).' };
+  } catch (err) {
+    return reportError_('approveCustomer', err, adminCredential);
   }
 }
 
