@@ -4,7 +4,28 @@
 
 **Symptom:** A single reservation takes **3+ seconds**.
 
-**Status:** Round 21 — filter UX: removable active-filter chips + filter panel with live count. Runtime confirmation pending.
+**Status:** Round 22 — customer-linked issuing (Issued Customer ID / Issued At / Due Date), "issued to me" + overdue. Runtime confirmation pending.
+
+---
+
+## Round 22 — issue books to a customer (linked), with due date + overdue
+
+Part 2 of the stats-strip work. Books are now issued to a specific customer (by id), not a free-text name.
+
+**Sheet (add manually to Books-DB):** `Issued Customer ID`, `Issued At`, `Due Date`.
+
+**Server (`Code.gs`):**
+- `getBookIssueColumns_` resolves the three columns by header name.
+- `issueBook(bookNo, customerId, customerName, adminCredential)` — writes Issued to (name) + Issued Customer ID + Issued At (now) + Due Date (now + 15 days = `LOAN_DAYS`), sets Issued, clears the reservation link. If the book was reserved by a **different** customer, that reservation is consumed/cancelled and the reserver's count decremented.
+- `returnBook` clears the three issue columns too.
+- `getBooks` exposes, per row: to admin → full issue details; to the **borrower** → `isMyIssue`, `dueDate`, `overdue`; never to other customers. `overdue` = due date < now.
+
+**Client (`Index.html`):**
+- **Issue modal** — free-text name replaced with a searchable **customer picker** (from `getCustomers`). If the book is reserved, the reserver is preselected with a note; picking a **different** customer flips the button to "Cancel reservation & issue" and triggers a confirm before issuing. Manual issue-date input removed (auto today + 15-day due).
+- **Book detail** — Issued shows: admin → issued-to/at/due + Overdue badge; owner → "You've borrowed this book" + due + Overdue; others → generic.
+- **Stats strip** — the customer's "issued to me" count (from Part 1) is now real via `isMyIssue`.
+
+Verified in-browser: picker populate/preselect/search, same-vs-different-customer button + confirm, and the admin/owner/other Issued detail rendering (incl. overdue).
 
 ---
 

@@ -814,18 +814,20 @@
       </div>
       <div class="modal-body">
         <p class="text-muted small mb-3" id="issueBookTitle"></p>
-        <div class="mb-3">
-          <label class="form-label">Subscriber Name <span class="text-danger">*</span></label>
-          <input type="text" id="iSubscriber" class="form-control" placeholder="Name of subscriber">
+        <!-- Shown when the book is currently reserved -->
+        <div id="issueReservedNote" class="alert alert-warning py-2 px-3 small mb-3" style="display:none"></div>
+        <div class="mb-2">
+          <label class="form-label" for="iCustomerSearch">Issue to customer <span class="text-danger">*</span></label>
+          <input type="text" id="iCustomerSearch" class="form-control form-control-sm mb-2" placeholder="Search customers…" oninput="filterIssueCustomers()">
+          <select id="iCustomer" class="form-select" size="6" onchange="onIssueCustomerChange()"></select>
         </div>
-        <div class="mb-1">
-          <label class="form-label">Issue Date</label>
-          <input type="date" id="iDate" class="form-control">
+        <div class="small text-muted">
+          <i class="bi bi-info-circle me-1"></i>Issued today · due in 15 days.
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-        <button type="button" class="btn btn-warning" onclick="submitIssue()">
+        <button type="button" class="btn btn-warning" id="issueSubmitBtn" onclick="submitIssue()">
           <i class="bi bi-check2 me-1"></i>Mark as Issued
         </button>
       </div>
@@ -898,9 +900,6 @@ let pendingReserveBookNo = '';
 // Init
 // ════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-  // Set today as default date in admin date picker
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('iDate').value = today;
   restoreCustomerSession();
   loadBooks();
 
@@ -1180,15 +1179,29 @@ function openBookDetail(bookNo) {
          </div>`;
     }
   } else if (book.status === 'Issued') {
-    reservationInfo = adminMode
-      ? `<div class="alert alert-danger py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
-           <i class="bi bi-person-fill me-1"></i>
-           Issued to <b>${escHtml(book.issuedTo)}</b>
-         </div>`
-      : `<div class="alert alert-danger py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+    const overdueTag = book.overdue
+      ? `<span class="badge bg-danger ms-1">Overdue</span>` : '';
+    const dueLine = book.dueDate
+      ? `<div class="mt-1"><i class="bi bi-calendar-check me-1"></i>Due <b>${escHtml(book.dueDate)}</b>${overdueTag}</div>` : '';
+    const issuedAtLine = book.issuedAt
+      ? `<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Issued <b>${escHtml(book.issuedAt)}</b></div>` : '';
+
+    if (adminMode) {
+      reservationInfo = `<div class="alert alert-danger py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+           <div><i class="bi bi-person-fill me-1"></i>Issued to <b>${escHtml(book.issuedTo)}</b></div>
+           ${issuedAtLine}${dueLine}
+         </div>`;
+    } else if (book.isMyIssue) {
+      reservationInfo = `<div class="alert ${book.overdue ? 'alert-danger' : 'alert-info'} py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+           <div><i class="bi bi-person-check-fill me-1"></i><b>You've borrowed this book.</b></div>
+           ${dueLine}
+         </div>`;
+    } else {
+      reservationInfo = `<div class="alert alert-danger py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
            <i class="bi bi-person-fill me-1"></i>
            This book is currently issued out.
          </div>`;
+    }
   }
 
   document.getElementById('modalBody').innerHTML = `
@@ -1720,37 +1733,112 @@ function unreserveMyActiveBook(reservationId) {
 // ════════════════════════════════════════════════
 function openIssue() {
   if (!activeBook) return;
-  document.getElementById('iSubscriber').value = activeBook.issuedTo || '';
   document.getElementById('issueBookTitle').textContent = '📚 ' + activeBook.bookName + ' (' + activeBook.bookNo + ')';
+  document.getElementById('iCustomerSearch').value = '';
+
+  // If the book is reserved, note the reserver and preselect them.
+  const note = document.getElementById('issueReservedNote');
+  const reservedById = activeBook.reservedCustomerId || '';
+  if (activeBook.status === 'Reserved' && (activeBook.reservedBy || reservedById)) {
+    note.style.display = '';
+    note.innerHTML = `<i class="bi bi-bookmark-fill me-1"></i>Reserved by <b>${escHtml(activeBook.reservedBy || 'a customer')}</b>. ` +
+      `Issue to them, or pick someone else — picking a different customer will cancel this reservation.`;
+  } else {
+    note.style.display = 'none';
+  }
+
   bookModal.hide();
-  setTimeout(() => issueModal.show(), 300);
+  // Ensure we have the customer list, then populate + preselect.
+  const showAfterLoad = () => {
+    populateIssueCustomers(reservedById);
+    setTimeout(() => issueModal.show(), 300);
+  };
+  if (allCustomers.length) {
+    showAfterLoad();
+  } else {
+    google.script.run
+      .withSuccessHandler(res => {
+        if (res && res.success) allCustomers = res.customers || [];
+        showAfterLoad();
+      })
+      .withFailureHandler(() => showAfterLoad())
+      .getCustomers(adminToken);
+  }
+}
+
+// Fill the customer <select>, optionally preselecting a customer id.
+function populateIssueCustomers(preselectId, searchTerm) {
+  const sel = document.getElementById('iCustomer');
+  const q = (searchTerm || '').toLowerCase();
+  const list = allCustomers
+    .filter(c => !q || (c.name || '').toLowerCase().includes(q) || (c.customerId || '').toLowerCase().includes(q))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  sel.innerHTML = list.map(c =>
+    `<option value="${escAttr(c.customerId)}" ${c.customerId === preselectId ? 'selected' : ''}>${escHtml(c.name)}${c.location ? ' · ' + escHtml(c.location) : ''}</option>`
+  ).join('') || '<option disabled>No customers found</option>';
+
+  onIssueCustomerChange();
+}
+
+function filterIssueCustomers() {
+  populateIssueCustomers(document.getElementById('iCustomer').value, document.getElementById('iCustomerSearch').value);
+}
+
+// Update the submit button label based on whether issuing to the reserver or
+// to a different customer (which will cancel the reservation).
+function onIssueCustomerChange() {
+  const sel = document.getElementById('iCustomer');
+  const btn = document.getElementById('issueSubmitBtn');
+  const reservedById = activeBook && activeBook.reservedCustomerId;
+  if (activeBook && activeBook.status === 'Reserved' && sel.value && sel.value !== reservedById) {
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Cancel reservation & issue';
+  } else {
+    btn.innerHTML = '<i class="bi bi-check2 me-1"></i>Mark as Issued';
+  }
 }
 
 function submitIssue() {
-  const subscriber = document.getElementById('iSubscriber').value.trim();
-  const date       = document.getElementById('iDate').value;
+  if (!activeBook) return;
+  const sel = document.getElementById('iCustomer');
+  const customerId = sel.value;
+  const customerName = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text.split(' · ')[0] : '';
+  if (!customerId) { showToast('Please select a customer.', 'warning'); return; }
 
-  if (!subscriber) { showToast('Please enter subscriber name.', 'warning'); return; }
-  if (!activeBook)  return;
+  const doIssue = () => {
+    setButtonLoading('issueModal', true);
+    google.script.run
+      .withSuccessHandler(res => {
+        setButtonLoading('issueModal', false);
+        issueModal.hide();
+        if (res.success) {
+          showToast(res.message, 'success');
+          refreshBook(activeBook.bookNo, 'Issued', customerName, '', '');
+        } else {
+          showToast(res.error || 'Failed.', 'danger');
+        }
+      })
+      .withFailureHandler(() => {
+        setButtonLoading('issueModal', false);
+        showToast('Something went wrong. Please try again.', 'danger');
+      })
+      .issueBook(activeBook.bookNo, customerId, customerName, adminToken);
+  };
 
-  setButtonLoading('issueModal', true);
-
-  google.script.run
-    .withSuccessHandler(res => {
-      setButtonLoading('issueModal', false);
-      issueModal.hide();
-      if (res.success) {
-        showToast(res.message, 'success');
-        refreshBook(activeBook.bookNo, 'Issued', subscriber, '', '', date);
-      } else {
-        showToast(res.error || 'Failed.', 'danger');
-      }
-    })
-    .withFailureHandler(err => {
-      setButtonLoading('issueModal', false);
-      showToast('Something went wrong. Please try again.', 'danger');
-    })
-    .issueBook(activeBook.bookNo, subscriber, date, adminToken);
+  // Confirm when issuing to a DIFFERENT customer than the reserver.
+  const reservedById = activeBook.reservedCustomerId || '';
+  if (activeBook.status === 'Reserved' && reservedById && customerId !== reservedById) {
+    issueModal.hide();
+    setTimeout(() => {
+      confirmAction(
+        `This book is reserved by ${activeBook.reservedBy || 'another customer'}. Issuing it to ${customerName} will cancel that reservation. Continue?`,
+        () => doIssue(),
+        { title: 'Cancel reservation & issue', confirmLabel: 'Yes, issue to ' + customerName, confirmClass: 'btn-warning' }
+      );
+    }, 250);
+  } else {
+    doIssue();
+  }
 }
 
 // ════════════════════════════════════════════════

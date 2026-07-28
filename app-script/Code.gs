@@ -51,6 +51,12 @@ const RESERVATION_UPDATED_AT_HEADER = 'Reservation Updated At';
 // admins see it (with a Hidden badge) and can unhide.
 const VISIBILITY_HEADER = 'Visibility';
 
+// Issue tracking (linked to a customer). Add these columns to Books-DB manually.
+const ISSUED_CUSTOMER_ID_HEADER = 'Issued Customer ID';
+const ISSUED_AT_HEADER = 'Issued At';
+const DUE_DATE_HEADER = 'Due Date';
+const LOAN_DAYS = 15; // due date = issued date + 15 days
+
 // Column indices in Customer DB sheet (0-based)
 // Header: Sr no | Name | Date of start | Location | Address | Account status | Till date sum
 const CUST = {
@@ -733,6 +739,7 @@ function getBooks(filters, adminCredential, customerToken) {
     const { sheet, headerRow, columns } = getSheetAndHeader_();
     const linkColumns = getExistingBookReservationLinkColumns_(sheet, headerRow);
     const visibilityColumn = getBookVisibilityColumn_(sheet, headerRow);
+    const issueColumns = getBookIssueColumns_(sheet, headerRow);
     const range    = sheet.getDataRange();
     const displayData = range.getDisplayValues();
     // Raw values for the reservation timestamps — needed so we can format them
@@ -773,6 +780,19 @@ function getBooks(filters, adminCredential, customerToken) {
         ? formatDateTime_(rawData[i][linkColumns.reservedAt], tz) : '';
       const reservationUpdatedAt = (rawData && linkColumns.reservationUpdatedAt !== -1)
         ? formatDateTime_(rawData[i][linkColumns.reservationUpdatedAt], tz) : '';
+
+      // Issue tracking (customer-linked).
+      const issuedCustomerId = issueColumns.issuedCustomerId === -1 ? '' : trim_(displayRow[issueColumns.issuedCustomerId]);
+      const issuedAtRaw = (rawData && issueColumns.issuedAt !== -1) ? rawData[i][issueColumns.issuedAt] : '';
+      const dueDateRaw  = (rawData && issueColumns.dueDate !== -1) ? rawData[i][issueColumns.dueDate] : '';
+      const isMyIssue = Boolean(
+        currentCustomer && currentCustomer.customerId && issuedCustomerId === currentCustomer.customerId
+      );
+      let overdue = false;
+      if (dueDateRaw) {
+        const due = new Date(dueDateRaw);
+        if (!isNaN(due.getTime()) && due.getTime() < Date.now()) overdue = true;
+      }
 
       let status = trim_(displayRow[columns.STATUS]);
       if (!status) status = issuedTo ? 'Issued' : 'Available';
@@ -816,7 +836,13 @@ function getBooks(filters, adminCredential, customerToken) {
         reservedCustomerId: isAdmin || isMyReservation ? effectiveReservedCustomerId : '',
         isMyReservation,
         // Admin-only: whether this book is hidden from end users.
-        hidden: isAdmin ? hidden : false
+        hidden: isAdmin ? hidden : false,
+        // Issue tracking — admin sees full details; the borrower sees their own.
+        issuedCustomerId: isAdmin ? issuedCustomerId : '',
+        issuedAt: (isAdmin || isMyIssue) ? formatDateTime_(issuedAtRaw, tz) : '',
+        dueDate:  (isAdmin || isMyIssue) ? formatDate_(dueDateRaw, tz) : '',
+        isMyIssue,
+        overdue:  (isAdmin || isMyIssue) ? overdue : false
       });
     }
 
@@ -1169,41 +1195,59 @@ function unreserveMyBook(reservationId, customerToken, bookNo) {
   }
 }
 
-function issueBook(bookNo, subscriberName, issueDate, adminCredential) {
+// Issue a book to a specific customer (linked by customer id). Records Issued
+// to (name), Issued Customer ID, Issued At (now), Due Date (now + LOAN_DAYS).
+// If the book is currently reserved by a DIFFERENT customer, that reservation
+// is cancelled first (the caller/admin confirms this on the client).
+function issueBook(bookNo, customerId, customerName, adminCredential) {
   try {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
-    if (!bookNo || !subscriberName)   return { success: false, error: 'Book number and subscriber name required.' };
+    bookNo = trim_(bookNo);
+    customerId = trim_(customerId);
+    customerName = trim_(customerName);
+    if (!bookNo) return { success: false, error: 'Book number is required.' };
+    if (!customerId || !customerName) return { success: false, error: 'Please select the customer to issue this book to.' };
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
     const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+    const issueColumns = getBookIssueColumns_(sheet, headerRow);
     const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
     if (!bookRowNumber) return { success: false, error: 'Book not found.' };
 
     const row      = getSheetRowValues_(sheet, bookRowNumber);
-    const date     = issueDate ? new Date(issueDate) : new Date();
+    const now      = new Date();
+    const dueDate  = new Date(now.getTime() + LOAN_DAYS * 24 * 60 * 60 * 1000);
     const bookName = trim_(row[columns.BOOK_NAME]);
-    // If the book was reserved, note the reserver so we can release their count.
-    const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
+    const priorReserverId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
 
-    row[columns.ISSUED_TO] = subscriberName.trim();
+    // Reservation handling: clearing the reservation link releases the book to
+    // the issue. If it was reserved by a DIFFERENT customer, that person's count
+    // must be decremented (their reservation is being cancelled).
+    row[columns.ISSUED_TO] = customerName;
     row[columns.STATUS] = 'Issued';
-    // Clear the reservation link — the book is now issued, not reserved.
+    if (issueColumns.issuedCustomerId !== -1) row[issueColumns.issuedCustomerId] = customerId;
+    if (issueColumns.issuedAt !== -1)         row[issueColumns.issuedAt] = now;
+    if (issueColumns.dueDate !== -1)          row[issueColumns.dueDate] = dueDate;
     if (linkColumns.reservationId !== -1)        row[linkColumns.reservationId] = '';
     if (linkColumns.reservedCustomerId !== -1)   row[linkColumns.reservedCustomerId] = '';
     if (linkColumns.reservedCustomerName !== -1) row[linkColumns.reservedCustomerName] = '';
     if (linkColumns.reservedAt !== -1)           row[linkColumns.reservedAt] = '';
-    if (linkColumns.reservationUpdatedAt !== -1) row[linkColumns.reservationUpdatedAt] = new Date();
+    if (linkColumns.reservationUpdatedAt !== -1) row[linkColumns.reservationUpdatedAt] = now;
     setSheetRowValues_(sheet, bookRowNumber, row);
 
-    if (ownerCustomerId) {
-      try { adjustCustomerActiveReservationCountById_(ownerCustomerId, -1); } catch (e) { /* non-fatal */ }
+    // Release the prior reserver's count when we cancelled/consumed a reservation.
+    if (priorReserverId) {
+      try { adjustCustomerActiveReservationCountById_(priorReserverId, -1); } catch (e) { /* non-fatal */ }
     }
 
     // Log to customer's named tab
-    logIssueToCustTab_(subscriberName.trim(), bookNo.trim(), bookName, date);
+    logIssueToCustTab_(customerName, bookNo, bookName, now);
 
     invalidatePublicBooksCache_();
-    return { success: true, message: '✅ Book marked as issued to ' + subscriberName.trim() };
+    return {
+      success: true,
+      message: '✅ Book issued to ' + customerName + '. Due ' + formatDate_(dueDate, Session.getScriptTimeZone()) + '.'
+    };
   } catch (err) {
     return reportError_('issueBook', err);
   }
@@ -1215,6 +1259,7 @@ function returnBook(bookNo, adminCredential) {
 
     const { sheet, headerRow, columns } = getSheetAndHeader_();
     const linkColumns = getBookReservationLinkColumns_(sheet, headerRow);
+    const issueColumns = getBookIssueColumns_(sheet, headerRow);
     const bookRowNumber = findDataRowByExactValue_(sheet, headerRow, columns.BOOK_NO, bookNo);
     if (!bookRowNumber) return { success: false, error: 'Book not found.' };
 
@@ -1222,10 +1267,13 @@ function returnBook(bookNo, adminCredential) {
     const issuedTo = trim_(row[columns.ISSUED_TO]);
     const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
 
-    // Clear issue AND any lingering reservation link so an available row never
-    // carries stale reservation fields.
+    // Clear issue (incl. the issue-tracking columns) AND any lingering
+    // reservation link so an available row never carries stale fields.
     row[columns.ISSUED_TO] = '';
     row[columns.STATUS] = 'Available';
+    if (issueColumns.issuedCustomerId !== -1) row[issueColumns.issuedCustomerId] = '';
+    if (issueColumns.issuedAt !== -1)         row[issueColumns.issuedAt] = '';
+    if (issueColumns.dueDate !== -1)          row[issueColumns.dueDate] = '';
     if (linkColumns.reservationId !== -1)        row[linkColumns.reservationId] = '';
     if (linkColumns.reservedCustomerId !== -1)   row[linkColumns.reservedCustomerId] = '';
     if (linkColumns.reservedCustomerName !== -1) row[linkColumns.reservedCustomerName] = '';
@@ -2314,6 +2362,16 @@ function getExistingBookReservationLinkColumns_(sheet, headerRow) {
 function getBookVisibilityColumn_(sheet, headerRow) {
   const headerValues = sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0];
   return getHeaderIndex_(getHeaderMap_(headerValues), VISIBILITY_HEADER);
+}
+
+// Resolve the issue-tracking columns by header name (-1 if a column is absent).
+function getBookIssueColumns_(sheet, headerRow) {
+  const headerMap = getHeaderMap_(sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+  return {
+    issuedCustomerId: getHeaderIndex_(headerMap, ISSUED_CUSTOMER_ID_HEADER),
+    issuedAt: getHeaderIndex_(headerMap, ISSUED_AT_HEADER),
+    dueDate: getHeaderIndex_(headerMap, DUE_DATE_HEADER)
+  };
 }
 
 // Ensure the Visibility column exists (create it once if missing) and return its
