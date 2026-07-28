@@ -40,6 +40,13 @@
   }
   .whatsapp-btn:hover { background: #1ebe5b; color: #fff; }
   .whatsapp-btn i { font-size: 1.05rem; }
+
+  /* ── Sign up: one amber style everywhere (pops on the green header, reads well
+     on light surfaces). Dark-brown text for contrast on amber. ── */
+  .btn-signup {
+    background: #ffb300; color: #3a2600; border: none; font-weight: 700;
+  }
+  .btn-signup:hover, .btn-signup:focus { background: #ffa000; color: #3a2600; }
   /* Save space on phones — icon only. */
   @media (max-width: 480px) { .whatsapp-label { display: none; } }
 
@@ -701,7 +708,7 @@
        title="Chat with us on WhatsApp" aria-label="Chat with us on WhatsApp">
       <i class="bi bi-whatsapp"></i><span class="whatsapp-label ms-1">WhatsApp</span>
     </a>
-    <button id="customerSignupBtn" class="btn btn-sm btn-success fw-bold" onclick="openAuthModal('register')" title="Create a free account">
+    <button id="customerSignupBtn" class="btn btn-sm btn-signup" onclick="openAuthModal('register')" title="Create a free account">
       <i class="bi bi-person-plus-fill me-1"></i>Sign up
     </button>
     <button id="customerLoginBtn" class="btn btn-sm btn-light" onclick="openCustomerAuth()" title="Login">
@@ -729,7 +736,7 @@
     You're viewing a free preview. <b>Log in or sign up</b> to view the full collection.
   </span>
   <span class="preview-banner-actions">
-    <button class="btn btn-sm btn-success fw-bold" onclick="openAuthModal('register')">
+    <button class="btn btn-sm btn-signup" onclick="openAuthModal('register')">
       <i class="bi bi-person-plus-fill me-1"></i>Sign up
     </button>
     <button class="btn btn-sm btn-outline-success" onclick="openAuthModal('login')">Log in</button>
@@ -852,7 +859,7 @@
         Log in or create a free account to browse the entire collection.
       </div>
       <div class="preview-cta-actions">
-        <button class="btn btn-success btn-lg" onclick="openAuthModal('register')">
+        <button class="btn btn-signup btn-lg" onclick="openAuthModal('register')">
           <i class="bi bi-person-plus-fill me-1"></i>Sign up
         </button>
         <button class="btn btn-outline-success btn-lg" onclick="openAuthModal('login')">
