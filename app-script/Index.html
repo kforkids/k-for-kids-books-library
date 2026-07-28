@@ -1215,6 +1215,9 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal" style="filter:invert(1)"></button>
       </div>
       <div class="modal-body">
+        <!-- Inline message (info for "code sent", danger for errors) shown inside
+             the modal rather than as a bottom toast. -->
+        <div id="resetMessage" class="alert py-2 px-3 small mb-3" style="display:none"></div>
         <div class="mb-3">
           <label class="form-label" for="resetEmail">Email</label>
           <input type="email" id="resetEmail" class="form-control" autocomplete="email" placeholder="you@example.com">
@@ -2765,18 +2768,33 @@ function handleCustomerAuthResponse(res) {
 }
 
 // ── Password reset (self-serve email OTP + admin reset code) ──
+// Inline message inside the reset modal. type: 'info' | 'success' | 'danger'.
+function showResetMessage_(msg, type) {
+  const el = document.getElementById('resetMessage');
+  if (!el) return;
+  el.className = 'alert alert-' + (type === 'danger' ? 'danger' : type === 'success' ? 'success' : 'info') + ' py-2 px-3 small mb-3';
+  el.textContent = msg;
+  el.style.display = '';
+}
+function clearResetMessage_() {
+  const el = document.getElementById('resetMessage');
+  if (el) { el.textContent = ''; el.style.display = 'none'; }
+}
+
 function openResetPassword(e) {
   if (e) e.preventDefault();
   document.getElementById('resetEmail').value =
     document.getElementById('loginIdentifier').value.trim() || '';
   document.getElementById('resetCode').value = '';
   document.getElementById('resetNewPassword').value = '';
+  clearResetMessage_();
   customerAuthModal.hide();
   setTimeout(() => resetModal.show(), 250);
 }
 
 function backToLoginFromReset(e) {
   if (e) e.preventDefault();
+  clearResetMessage_();
   resetModal.hide();
   setTimeout(() => openCustomerAuth(), 250);
 }
@@ -2784,17 +2802,22 @@ function backToLoginFromReset(e) {
 // Step 1: email a 6-digit code to the entered address.
 function sendResetCode() {
   const email = document.getElementById('resetEmail').value.trim();
-  if (!email) { showToast('Enter your email first.', 'warning'); return; }
+  clearResetMessage_();
+  if (!email) { showResetMessage_('Enter your email first.', 'danger'); return; }
   const btn = document.getElementById('resetSendBtn');
   setInlineButtonLoading(btn, true, 'Sending…');
   google.script.run
     .withSuccessHandler(res => {
       setInlineButtonLoading(btn, false);
-      showToast((res && res.message) || 'If that email is registered, a code is on its way.', res && res.success ? 'success' : 'danger');
+      if (res && res.success) {
+        showResetMessage_(res.message || 'If that email is registered, a code is on its way.', 'info');
+      } else {
+        showResetMessage_((res && res.error) || 'Could not send the code. Please try again.', 'danger');
+      }
     })
     .withFailureHandler(() => {
       setInlineButtonLoading(btn, false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      showResetMessage_('Something went wrong. Please try again.', 'danger');
     })
     .requestPasswordOtp(email);
 }
@@ -2805,9 +2828,10 @@ function submitResetPassword() {
   const email = document.getElementById('resetEmail').value.trim();
   const code = document.getElementById('resetCode').value.trim();
   const newPassword = document.getElementById('resetNewPassword').value;
-  if (!email) { showToast('Enter your email.', 'warning'); return; }
-  if (!code) { showToast('Enter the reset code.', 'warning'); return; }
-  if (!newPassword || newPassword.length < 8) { showToast('New password must be at least 8 characters.', 'warning'); return; }
+  clearResetMessage_();
+  if (!email) { showResetMessage_('Enter your email.', 'danger'); return; }
+  if (!code) { showResetMessage_('Enter the reset code.', 'danger'); return; }
+  if (!newPassword || newPassword.length < 8) { showResetMessage_('New password must be at least 8 characters.', 'danger'); return; }
 
   setButtonLoading('resetModal', true);
   google.script.run
@@ -2822,12 +2846,12 @@ function submitResetPassword() {
         loadBooks();
         showToast(res.message || 'Password reset. You are logged in.', 'success');
       } else {
-        showToast((res && res.error) || 'Reset failed.', 'danger');
+        showResetMessage_((res && res.error) || 'Reset failed.', 'danger');
       }
     })
     .withFailureHandler(() => {
       setButtonLoading('resetModal', false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      showResetMessage_('Something went wrong. Please try again.', 'danger');
     })
     .resetPassword(email, code, newPassword);
 }
