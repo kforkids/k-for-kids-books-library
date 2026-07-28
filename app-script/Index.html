@@ -973,7 +973,7 @@
             </div>
           </form>
           <div class="small d-flex justify-content-between flex-wrap gap-2">
-            <a href="#" onclick="showRegisterPane(event)"><b>New here? Create an account</b></a>
+            <a href="#" onclick="showRegisterPane(event)"><b>New here? Sign up</b></a>
             <a href="#" onclick="showInvitePane(event)">Have an invite code?</a>
           </div>
         </div>
@@ -2518,7 +2518,7 @@ function setAuthPane_(active) {
   document.getElementById('customerAuthSubmitBtn').textContent = labels[active];
   const titles = {
     login: '<i class="bi bi-person-circle me-2"></i>Login',
-    register: '<i class="bi bi-person-plus me-2"></i>Create your account',
+    register: '<i class="bi bi-person-plus me-2"></i>Sign up',
     invite: '<i class="bi bi-ticket-perforated me-2"></i>Join with invite code'
   };
   document.getElementById('customerAuthTitle').innerHTML = titles[active];
