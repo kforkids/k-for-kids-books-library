@@ -450,6 +450,25 @@
   .empty-state i { font-size: 3rem; }
 
   /* ── Anonymous preview CTA ── */
+  /* ── Slim top banner for anonymous visitors ── */
+  .preview-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    padding: 9px 16px;
+    background: #f0fdf4;
+    border-bottom: 1px solid #bbf7d0;
+    color: #14532d;
+    font-size: .9rem;
+  }
+  .preview-banner-text b { font-weight: 700; }
+  .preview-banner-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  @media (max-width: 560px) {
+    .preview-banner { font-size: .82rem; padding: 8px 12px; }
+  }
+
   #previewCta { padding: 8px 16px 48px; }
   .preview-cta-card {
     max-width: 560px;
@@ -683,6 +702,9 @@
        title="Chat with us on WhatsApp" aria-label="Chat with us on WhatsApp">
       <i class="bi bi-whatsapp"></i><span class="whatsapp-label ms-1">WhatsApp</span>
     </a>
+    <button id="customerSignupBtn" class="btn btn-sm btn-warning fw-bold" onclick="openAuthModal('register')" title="Create a free account">
+      <i class="bi bi-person-plus-fill me-1"></i>Sign up
+    </button>
     <button id="customerLoginBtn" class="btn btn-sm btn-light" onclick="openCustomerAuth()" title="Login">
       <i class="bi bi-person-circle me-1"></i>Login
     </button>
@@ -697,6 +719,23 @@
   <span class="ab-icon" id="actionBannerIcon"></span>
   <span class="ab-msg" id="actionBannerMsg"></span>
   <button type="button" class="ab-close" id="actionBannerClose" aria-label="Dismiss"><i class="bi bi-x"></i></button>
+</div>
+
+<!-- ══════════════ ANON PREVIEW BANNER (top) ══════════════ -->
+<!-- Shown to not-logged-in visitors the instant the page loads, so the sign-up
+     prompt is clear without scrolling to the bottom CTA. -->
+<div class="preview-banner" id="previewBanner" style="display:none">
+  <span class="preview-banner-text">
+    <i class="bi bi-lock-fill me-1"></i>
+    You're viewing a free preview. <b>Log in or sign up</b> to browse all
+    <b id="previewBannerTotal">the</b> books.
+  </span>
+  <span class="preview-banner-actions">
+    <button class="btn btn-sm btn-warning fw-bold" onclick="openAuthModal('register')">
+      <i class="bi bi-person-plus-fill me-1"></i>Sign up
+    </button>
+    <button class="btn btn-sm btn-outline-success" onclick="openAuthModal('login')">Log in</button>
+  </span>
 </div>
 
 <!-- ══════════════ ADMIN TAB BAR ══════════════ -->
@@ -1237,6 +1276,7 @@ function onBooksLoaded(result) {
   // say how many more books they'd unlock by logging in / registering.
   previewCapped    = Boolean(result.capped);
   previewTotalCount = result.totalCount || allBooks.length;
+  updatePreviewBanner_(); // refresh the top banner's total now that we know it
   renderAgeGroupFilters();
   applyFilters();
   // Note: getBooks now builds the image map on a cold cache, so the first load
@@ -1488,6 +1528,17 @@ function renderPreviewCta() {
     `You're viewing <b>${shown}</b> of <b>${total}</b> books. ` +
     `Log in or create a free account to browse the entire collection.`;
   cta.style.display = '';
+}
+
+// Slim top banner shown to anonymous visitors so the sign-up prompt is visible
+// immediately, without scrolling to the bottom CTA. Hidden for anyone signed in.
+function updatePreviewBanner_() {
+  const banner = document.getElementById('previewBanner');
+  if (!banner) return;
+  const isAnon = !adminMode && !currentCustomer;
+  banner.style.display = isAnon ? '' : 'none';
+  const totalEl = document.getElementById('previewBannerTotal');
+  if (totalEl) totalEl.textContent = previewTotalCount ? previewTotalCount.toLocaleString() : 'the';
 }
 
 function updateStats() {
@@ -2630,6 +2681,10 @@ function renderCustomerState() {
   const signedIn = adminMode || Boolean(currentCustomer);
   loginBtn.style.display  = signedIn ? 'none' : '';
   logoutBtn.style.display = signedIn ? '' : 'none';
+  // Header "Sign up" and the top preview banner are for anonymous visitors only.
+  const signupBtn = document.getElementById('customerSignupBtn');
+  if (signupBtn) signupBtn.style.display = signedIn ? 'none' : '';
+  updatePreviewBanner_();
 
   // Admin-only filters (e.g. "No image" for finding books missing a cover).
   document.querySelectorAll('.admin-only-filter').forEach(el => {
