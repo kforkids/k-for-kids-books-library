@@ -295,6 +295,10 @@
   .modal-title { font-size: 1rem; }
 
   /* ── Book detail modal: large cover + tidy facts list ── */
+  /* Issued/reservation notice sits at the top of the modal body (right under the
+     title banner). Kill the alert's own top margin and give it bottom spacing. */
+  .reservation-info-top:empty { display: none; }
+  .reservation-info-top .alert { margin-top: 0 !important; margin-bottom: 16px !important; }
   .book-detail-head {
     display: flex;
     gap: 28px;
@@ -1513,6 +1517,7 @@ function openBookDetail(bookNo) {
   }
 
   document.getElementById('modalBody').innerHTML = `
+    <div id="reservationInfoBox" class="reservation-info-top">${reservationInfo}</div>
     <div class="book-detail-head">
       ${imgPart}
       <div class="book-detail-meta">
@@ -1527,7 +1532,6 @@ function openBookDetail(bookNo) {
         </dl>
       </div>
     </div>
-    <div id="reservationInfoBox">${reservationInfo}</div>
     ${buildAdminSection(book)}
   `;
 
