@@ -217,16 +217,110 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  .book-meta { font-size: .7rem; color: #888; margin-top: 4px; }
-  .book-no   { font-size: .68rem; color: #bbb; margin-top: 2px; }
 
-  /* ── Admin badge on card ── */
-  .admin-card-info { font-size: .68rem; color: #555; margin-top: 5px; border-top: 1px dashed #eee; padding-top: 5px; }
+  /* ── Hover overlay: details revealed over the cover on hover/focus ── */
+  .book-hover {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    padding: 48px 12px 40px;   /* top padding clears the action-icon bar */
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    color: #fff;
+    background: linear-gradient(180deg, rgba(15,40,20,.55) 0%, rgba(15,40,20,.86) 100%);
+    opacity: 0;
+    transition: opacity .18s ease;
+    pointer-events: none;
+    overflow: hidden;
+  }
+  .book-card:hover .book-hover,
+  .book-card:focus-within .book-hover { opacity: 1; }
+  .book-hover .hover-author { font-size: .72rem; opacity: .95; font-weight: 600; }
+  .book-hover .hover-cat    { font-size: .7rem;  opacity: .82; }
+  .book-hover .hover-facts  { font-size: .68rem; opacity: .78; margin-top: 2px; }
+  .book-hover .hover-issued { font-size: .68rem; opacity: .9; margin-top: 4px; }
+  .book-hover-tap {
+    position: absolute;
+    left: 12px; bottom: 10px;
+    font-size: .66rem;
+    opacity: .85;
+    font-weight: 600;
+  }
+  /* On touch devices there's no hover — keep details discoverable via the modal
+     tap hint by showing a subtle gradient + tap affordance without full detail. */
+  @media (hover: none) {
+    .book-hover { padding-bottom: 12px; }
+  }
+
+  /* ── Quick-action icon bar on the card (over the cover, on hover) ── */
+  .card-actions {
+    position: absolute;
+    top: 7px; left: 7px;
+    z-index: 4;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity .16s ease, transform .16s ease;
+    pointer-events: none;
+  }
+  .book-card:hover .card-actions,
+  .book-card:focus-within .card-actions { opacity: 1; transform: none; pointer-events: auto; }
+  @media (hover: none) { .card-actions { opacity: 1; transform: none; pointer-events: auto; } }
+  .card-action {
+    width: 34px; height: 34px;
+    border: none;
+    border-radius: 50%;
+    background: rgba(255,255,255,.95);
+    color: #333;
+    font-size: .95rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,.25);
+    cursor: pointer;
+    transition: transform .1s ease, background .1s ease;
+  }
+  .card-action:hover { transform: scale(1.12); }
+  .card-action.ca-success { color: #2e7d32; }
+  .card-action.ca-danger  { color: #c62828; }
+  .card-action.ca-warning { color: #e65100; }
+  .card-action.ca-primary { color: #1565c0; }
+  .card-action.ca-muted   { color: #555; }
 
   /* ── Modal overrides ── */
   .modal-header { background: var(--brand); color: #fff; }
   .modal-header .btn-close { filter: invert(1); }
   .modal-title { font-size: 1rem; }
+
+  /* ── Book detail modal: larger cover + tidy facts list ── */
+  .book-detail-head {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 16px;
+  }
+  .book-detail-head .detail-img,
+  .book-detail-head .detail-img-placeholder {
+    width: 190px;
+    height: 253px;   /* keeps the 3:4 ratio */
+    font-size: 3.4rem;
+  }
+  .book-detail-meta { min-width: 0; flex: 1; }
+  .book-detail-facts {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 14px;
+    margin: 0;
+    font-size: .88rem;
+  }
+  .book-detail-facts dt { color: #888; font-weight: 600; }
+  .book-detail-facts dd { margin: 0; color: #222; }
+  @media (max-width: 480px) {
+    .book-detail-head { gap: 14px; }
+    .book-detail-head .detail-img,
+    .book-detail-head .detail-img-placeholder { width: 120px; height: 160px; font-size: 2.5rem; }
+  }
 
   /* ── ONE standard book cover for ALL modals (detail, limit, confirm) ── */
   .detail-img, .reservation-thumb, .confirm-cover {
@@ -842,7 +936,7 @@
 
 <!-- ══════════════ BOOK DETAIL MODAL ══════════════ -->
 <div class="modal fade" id="bookModal" tabindex="-1">
-  <div class="modal-dialog modal-dialog-centered">
+  <div class="modal-dialog modal-dialog-centered modal-lg">
     <div class="modal-content">
       <div class="modal-header">
         <h5 class="modal-title" id="modalTitle">Book Details</h5>
@@ -1015,6 +1109,13 @@ document.addEventListener('DOMContentLoaded', () => {
   loadBooks();
 
   document.getElementById('booksGrid').addEventListener('click', event => {
+    // A quick-action icon takes precedence over opening the detail modal.
+    const actionBtn = event.target.closest('.card-action');
+    if (actionBtn) {
+      event.stopPropagation();
+      runCardAction(actionBtn.dataset.action, actionBtn.dataset.bookNo);
+      return;
+    }
     const card = event.target.closest('.book-card');
     if (card) openBookDetail(card.dataset.bookNo);
   });
@@ -1164,11 +1265,6 @@ function bookCardHtml(book) {
     : '';
   const placeholder = `<div class="book-img-placeholder" ${book.imageUrl ? 'style="display:none"' : ''}>
       <i class="bi bi-book"></i><small>${escHtml(book.bookNo)}</small></div>`;
-  const adminInfo = adminMode && book.issuedTo
-    ? `<div class="admin-card-info">
-        <i class="bi bi-person me-1"></i>${escHtml(book.issuedTo)}
-      </div>`
-    : '';
   const savingOverlay = book._saving
     ? `<div class="card-saving"><span class="spinner-border spinner-border-sm"></span> ${escHtml(book._saving)}…</div>`
     : '';
@@ -1176,25 +1272,66 @@ function bookCardHtml(book) {
   const hiddenBadge = (adminMode && book.hidden)
     ? `<span class="hidden-badge"><i class="bi bi-eye-slash me-1"></i>Hidden</span>`
     : '';
+
+  // Hover overlay: the full details (author, category, book no, language, age)
+  // that used to live under the cover. Revealed on hover / focus only.
+  const detailRows = [];
+  if (book.author)   detailRows.push(`<div class="hover-author">${escHtml(book.author)}</div>`);
+  if (book.category) detailRows.push(`<div class="hover-cat">${escHtml(book.category)}</div>`);
+  const facts = [escHtml(book.bookNo), escHtml(book.language)];
+  if (book.ageGroup) facts.push(escHtml(formatAgeGroup(book.ageGroup)));
+  detailRows.push(`<div class="hover-facts">${facts.filter(Boolean).join(' · ')}</div>`);
+  if (adminMode && book.issuedTo) detailRows.push(`<div class="hover-issued"><i class="bi bi-person me-1"></i>${escHtml(book.issuedTo)}</div>`);
+  const hoverOverlay = `<div class="book-hover">
+      ${detailRows.join('')}
+      <div class="book-hover-tap"><i class="bi bi-arrows-fullscreen me-1"></i>Tap for details</div>
+    </div>`;
+
   return `<div class="book-card ${book.status !== 'Available' ? 'unavailable' : ''} ${book._saving ? 'is-saving' : ''} ${adminMode && book.hidden ? 'is-hidden-admin' : ''}"
                 data-book-no="${escAttr(book.bookNo)}">
     <div class="book-img-wrap">
       ${imgHtml}${placeholder}
       <span class="status-badge badge-${sc}">${escHtml(book.status)}</span>
       ${hiddenBadge}
+      ${hoverOverlay}
+      ${cardActionsHtml(book)}
       ${savingOverlay}
     </div>
     <div class="book-info">
       <div class="book-title">${escHtml(book.bookName)}</div>
-      <div class="book-meta">${escHtml(book.author || '—')}</div>
-      <div class="book-meta">${escHtml(book.category || '—')}</div>
-      <div class="book-no">
-        ${escHtml(book.bookNo)} · ${escHtml(book.language)}
-        ${book.ageGroup ? ' · ' + escHtml(formatAgeGroup(book.ageGroup)) : ''}
-      </div>
-      ${adminInfo}
     </div>
   </div>`;
+}
+
+// Quick-action icon bar shown on the card (over the cover, on hover). Buttons
+// carry data-action + data-book-no so the delegated grid click handler can run
+// them without opening the detail modal.
+function cardActionsHtml(book) {
+  const btns = [];
+  const btn = (action, icon, label, cls) =>
+    `<button type="button" class="card-action ${cls || ''}" data-action="${action}"
+             data-book-no="${escAttr(book.bookNo)}" title="${label}" aria-label="${label}">
+       <i class="bi ${icon}"></i>
+     </button>`;
+
+  if (adminMode) {
+    if (book.status === 'Available' || book.status === 'Reserved') btns.push(btn('issue', 'bi-person-check', 'Mark as issued', 'ca-warning'));
+    if (book.status === 'Reserved') btns.push(btn('cancelReservation', 'bi-x-circle', 'Cancel reservation', 'ca-danger'));
+    if (book.status === 'Issued')   btns.push(btn('returnBook', 'bi-arrow-return-left', 'Mark as returned', 'ca-success'));
+    btns.push(book.hidden
+      ? btn('show', 'bi-eye', 'Show to users', 'ca-primary')
+      : btn('hide', 'bi-eye-slash', 'Hide from users', 'ca-muted'));
+  } else if (currentCustomer) {
+    // Logged-in customer quick actions.
+    if (book.status === 'Reserved' && book.isMyReservation) {
+      btns.push(btn('unreserve', 'bi-bookmark-x', 'Unreserve', 'ca-danger'));
+    } else if (book.status === 'Available' && isCustomerActive()) {
+      btns.push(btn('reserve', 'bi-bookmark-plus', 'Reserve', 'ca-success'));
+    }
+  }
+
+  if (!btns.length) return '';
+  return `<div class="card-actions">${btns.join('')}</div>`;
 }
 
 function appendBooks() {
@@ -1288,7 +1425,7 @@ function openBookDetail(bookNo) {
   if (!book) return;
   activeBook = book;
 
-  document.getElementById('modalTitle').textContent = book.bookNo;
+  document.getElementById('modalTitle').textContent = book.bookName || book.bookNo;
 
   const imgPart = book.imageUrl
     ? `<img src="${escAttr(book.imageUrl)}" class="detail-img" alt="" onerror="this.outerHTML='<div class=\'detail-img-placeholder\'><i class=\'bi bi-book\'></i></div>'">`
@@ -1355,15 +1492,18 @@ function openBookDetail(bookNo) {
   }
 
   document.getElementById('modalBody').innerHTML = `
-    <div class="d-flex gap-3 mb-3">
+    <div class="book-detail-head">
       ${imgPart}
-      <div>
-        <h6 class="mb-1 fw-bold">${escHtml(book.bookName)}</h6>
-        <div class="text-muted small mb-1">${escHtml(book.author || '—')}</div>
-        <div class="text-muted small mb-1">${escHtml(book.category || '—')}</div>
-        <div class="mb-1 small"><span class="text-muted">Language:</span> ${escHtml(book.language)}</div>
-        ${book.ageGroup ? `<div class="mb-1 small"><span class="text-muted">Age group:</span> ${escHtml(formatAgeGroup(book.ageGroup))}</div>` : ''}
-        <div class="mb-2">${pill}</div>
+      <div class="book-detail-meta">
+        <h5 class="mb-1 fw-bold">${escHtml(book.bookName)}</h5>
+        ${book.author ? `<div class="text-muted mb-2">${escHtml(book.author)}</div>` : ''}
+        <div class="mb-3">${pill}</div>
+        <dl class="book-detail-facts">
+          ${book.category ? `<dt>Category</dt><dd>${escHtml(book.category)}</dd>` : ''}
+          <dt>Language</dt><dd>${escHtml(book.language || '—')}</dd>
+          ${book.ageGroup ? `<dt>Age group</dt><dd>${escHtml(formatAgeGroup(book.ageGroup))}</dd>` : ''}
+          <dt>Book no.</dt><dd>${escHtml(book.bookNo)}</dd>
+        </dl>
       </div>
     </div>
     <div id="reservationInfoBox">${reservationInfo}</div>
@@ -1522,6 +1662,28 @@ function setBookVisibility(visible) {
     })
     .withFailureHandler(() => showBanner('Something went wrong. Please try again.', 'danger'))
     .setBookVisibility(bookNo, visible, adminToken);
+}
+
+// ════════════════════════════════════════════════
+// Card quick actions (reserve / unreserve / admin)
+// ════════════════════════════════════════════════
+// Run a quick action triggered from a book card's icon bar, without opening the
+// detail modal. Several downstream functions operate on the modal's `activeBook`,
+// so we point it at the card's book first.
+function runCardAction(action, bookNo) {
+  const book = allBooks.find(b => b.bookNo === bookNo);
+  if (!book) return;
+  activeBook = book;
+
+  switch (action) {
+    case 'reserve':            openReserve(); break;
+    case 'unreserve':          if (book.reservationId) unreserveMyActiveBook(book.reservationId); break;
+    case 'issue':              openIssue(); break;
+    case 'cancelReservation':  doAdminAction('cancelReservation', bookNo); break;
+    case 'returnBook':         doAdminAction('returnBook', bookNo); break;
+    case 'hide':               setBookVisibility(false); break;
+    case 'show':               setBookVisibility(true); break;
+  }
 }
 
 // ════════════════════════════════════════════════
