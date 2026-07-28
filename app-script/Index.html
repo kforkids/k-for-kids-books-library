@@ -228,13 +228,16 @@
     padding: 8px 10px 10px;
     flex: 1;
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
   .book-title {
     font-size: .8rem;
     font-weight: 600;
     color: #222;
     line-height: 1.3;
+    flex: 1;
+    min-width: 0;
     line-clamp: 2;
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -247,7 +250,7 @@
     position: absolute;
     inset: 0;
     z-index: 2;
-    padding: 48px 12px 40px;   /* top padding clears the action-icon bar */
+    padding: 16px 12px 40px;   /* actions moved beside the title, so no top gap needed */
     display: flex;
     flex-direction: column;
     gap: 3px;
@@ -277,41 +280,31 @@
     .book-hover { padding-bottom: 12px; }
   }
 
-  /* ── Quick-action icon bar on the card (over the cover, on hover) ── */
+  /* ── Quick-action icons beside the title (always visible, tinted circles) ── */
   .card-actions {
-    position: absolute;
-    top: 7px; left: 7px;
-    z-index: 4;
     display: flex;
-    gap: 6px;
-    opacity: 0;
-    transform: translateY(-4px);
-    transition: opacity .16s ease, transform .16s ease;
-    pointer-events: none;
+    gap: 5px;
+    flex-shrink: 0;
   }
-  .book-card:hover .card-actions,
-  .book-card:focus-within .card-actions { opacity: 1; transform: none; pointer-events: auto; }
-  @media (hover: none) { .card-actions { opacity: 1; transform: none; pointer-events: auto; } }
   .card-action {
-    width: 34px; height: 34px;
+    width: 30px; height: 30px;
     border: none;
     border-radius: 50%;
-    background: rgba(255,255,255,.95);
+    background: #f1f3f1;
     color: #333;
-    font-size: .95rem;
+    font-size: .88rem;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 6px rgba(0,0,0,.25);
     cursor: pointer;
-    transition: transform .1s ease, background .1s ease;
+    transition: transform .1s ease, filter .1s ease;
   }
-  .card-action:hover { transform: scale(1.12); }
-  .card-action.ca-success { color: #2e7d32; }
-  .card-action.ca-danger  { color: #c62828; }
-  .card-action.ca-warning { color: #e65100; }
-  .card-action.ca-primary { color: #1565c0; }
-  .card-action.ca-muted   { color: #555; }
+  .card-action:hover { transform: scale(1.12); filter: brightness(.96); }
+  .card-action.ca-success { color: #2e7d32; background: #e8f5e9; }
+  .card-action.ca-danger  { color: #c62828; background: #fdecea; }
+  .card-action.ca-warning { color: #e65100; background: #fff3e0; }
+  .card-action.ca-primary { color: #1565c0; background: #e3f2fd; }
+  .card-action.ca-muted   { color: #555;    background: #eceff1; }
 
   /* ── Modal overrides ── */
   .modal-header { background: var(--brand); color: #fff; }
@@ -1358,11 +1351,11 @@ function bookCardHtml(book) {
       <span class="status-badge badge-${sc}">${escHtml(book.status)}</span>
       ${hiddenBadge}
       ${hoverOverlay}
-      ${cardActionsHtml(book)}
       ${savingOverlay}
     </div>
     <div class="book-info">
       <div class="book-title">${escHtml(book.bookName)}</div>
+      ${cardActionsHtml(book)}
     </div>
   </div>`;
 }
@@ -2678,6 +2671,15 @@ function showLoading(show) {
   const grid = document.getElementById('booksGrid');
   el.style.display   = show ? '' : 'none';
   grid.style.display = show ? 'none' : '';
+  // Hide the anonymous preview CTA while a load is in flight — e.g. right after
+  // a successful login/signup the catalog is reloading and the visitor is no
+  // longer anonymous, so the "create account / log in" prompt must not linger.
+  if (show) {
+    const cta = document.getElementById('previewCta');
+    if (cta) cta.style.display = 'none';
+    const sentinel = document.getElementById('scrollSentinel');
+    if (sentinel) sentinel.style.display = 'none';
+  }
 
   if (show) {
     _loadingPct = 0;
