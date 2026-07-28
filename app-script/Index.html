@@ -1376,14 +1376,15 @@ function bookCardHtml(book) {
     ? `<span class="hidden-badge"><i class="bi bi-eye-slash me-1"></i>Hidden</span>`
     : '';
 
-  // Hover overlay: the full details (author, category, book no, language, age)
-  // that used to live under the cover. Revealed on hover / focus only.
+  // Hover overlay: the full details (author, category, language, age) revealed on
+  // hover / focus only. Language and age each get their own line; the book code
+  // is hidden from end users (admins still see it for lookups).
   const detailRows = [];
   if (book.author)   detailRows.push(`<div class="hover-author">${escHtml(book.author)}</div>`);
   if (book.category) detailRows.push(`<div class="hover-cat">${escHtml(book.category)}</div>`);
-  const facts = [escHtml(book.bookNo), escHtml(book.language)];
-  if (book.ageGroup) facts.push(escHtml(formatAgeGroup(book.ageGroup)));
-  detailRows.push(`<div class="hover-facts">${facts.filter(Boolean).join(' · ')}</div>`);
+  if (book.language) detailRows.push(`<div class="hover-facts">${escHtml(book.language)}</div>`);
+  if (book.ageGroup) detailRows.push(`<div class="hover-facts">${escHtml(formatAgeGroup(book.ageGroup))}</div>`);
+  if (adminMode)     detailRows.push(`<div class="hover-facts hover-code">${escHtml(book.bookNo)}</div>`);
   if (adminMode && book.issuedTo) detailRows.push(`<div class="hover-issued"><i class="bi bi-person me-1"></i>${escHtml(book.issuedTo)}</div>`);
   const hoverOverlay = `<div class="book-hover">
       ${detailRows.join('')}
