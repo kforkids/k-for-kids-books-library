@@ -772,7 +772,11 @@ function getBooks(filters, adminCredential, customerToken) {
     for (let i = headerRow + 1; i < displayData.length; i++) {
       const displayRow = displayData[i];
       const bookNo     = trim_(displayRow[columns.BOOK_NO]);
-      if (!bookNo)  continue;
+      const bookName   = trim_(displayRow[columns.BOOK_NAME]);
+      // A real book needs BOTH a code and a name. Skip placeholder / empty sheet
+      // rows that carry only a book number (e.g. reserved-but-not-filled IDs) so
+      // they never appear as blank cards to anyone.
+      if (!bookNo || !bookName) continue;
 
       // Visibility: hidden books are shown only to admins (with a Hidden badge).
       const hidden = visibilityColumn !== -1 && isBookHidden_(displayRow[visibilityColumn]);
@@ -780,7 +784,6 @@ function getBooks(filters, adminCredential, customerToken) {
 
       const language   = trim_(displayRow[columns.LANGUAGE]);
       const ageGroup   = trim_(displayRow[columns.AGE_GROUP]);
-      const bookName   = trim_(displayRow[columns.BOOK_NAME]);
       const category   = trim_(displayRow[columns.CATEGORY]);
       const issuedTo   = trim_(displayRow[columns.ISSUED_TO]);
       const author     = trim_(displayRow[columns.AUTHOR]);
