@@ -50,14 +50,13 @@
     box-shadow: 0 2px 8px rgba(0,0,0,.08);
   }
 
-  /* ── Search bar ── */
-  .search-bar { background: #fff; padding: 12px 16px; border-bottom: 1px solid #e0e0e0; }
+  /* ── Search + filters: ONE row on desktop, wraps on small screens ── */
+  .search-bar { flex: 1 1 260px; min-width: 220px; }
   .search-bar .input-group { max-width: 600px; }
 
-  /* ── Filters (dropdowns; apply on change) ── */
   .filter-bar {
     background: #fff;
-    padding: 8px 16px 10px;
+    padding: 10px 16px;
     border-bottom: 1px solid #e0e0e0;
     display: flex;
     gap: 10px;
@@ -749,20 +748,19 @@
 </div>
 
 <div class="sticky-controls">
-  <!-- ══════════════ SEARCH ══════════════ -->
-  <div class="search-bar" id="searchBarEl">
-    <div class="input-group">
-      <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
-      <input type="text" id="searchInput" class="form-control" placeholder="Search by title, author, or book number…"
-             oninput="debouncedSearch()">
-      <button class="btn btn-outline-secondary" onclick="clearSearch()" title="Clear">
-        <i class="bi bi-x"></i>
-      </button>
-    </div>
-  </div>
-
-  <!-- ══════════════ FILTERS (dropdowns; apply on change) ══════════════ -->
+  <!-- ══════════════ SEARCH + FILTERS (one row on desktop, wraps on mobile) ══ -->
   <div class="filter-bar" id="filterBarEl">
+    <div class="search-bar" id="searchBarEl">
+      <div class="input-group">
+        <span class="input-group-text bg-white"><i class="bi bi-search text-muted"></i></span>
+        <input type="text" id="searchInput" class="form-control" placeholder="Search by title, author, or book number…"
+               oninput="debouncedSearch()">
+        <button class="btn btn-outline-secondary" onclick="clearSearch()" title="Clear">
+          <i class="bi bi-x"></i>
+        </button>
+      </div>
+    </div>
+
     <label class="filter-field">
       <span class="filter-label">Language</span>
       <select id="filterLanguage" class="form-select form-select-sm" onchange="onFilterChange('language', this.value)">
@@ -856,7 +854,7 @@
       </div>
       <div class="preview-cta-actions">
         <button class="btn btn-success btn-lg" onclick="openAuthModal('register')">
-          <i class="bi bi-person-plus-fill me-1"></i>Create account
+          <i class="bi bi-person-plus-fill me-1"></i>Sign up
         </button>
         <button class="btn btn-outline-success btn-lg" onclick="openAuthModal('login')">
           <i class="bi bi-box-arrow-in-right me-1"></i>Log in
@@ -2515,7 +2513,7 @@ function setAuthPane_(active) {
   Object.keys(panes).forEach(key => {
     document.getElementById(panes[key]).style.display = key === active ? '' : 'none';
   });
-  const labels = { login: 'Login', register: 'Create account', invite: 'Join' };
+  const labels = { login: 'Login', register: 'Sign up', invite: 'Join' };
   document.getElementById('customerAuthSubmitBtn').textContent = labels[active];
   const titles = {
     login: '<i class="bi bi-person-circle me-2"></i>Login',
