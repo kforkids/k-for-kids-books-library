@@ -355,13 +355,24 @@
   .book-detail-facts dt { color: #888; font-weight: 600; }
   .book-detail-facts dd { margin: 0; color: #222; }
   @media (max-width: 700px) {
-    .book-detail-head { flex-direction: column; align-items: center; gap: 16px; }
+    .book-detail-head { flex-direction: column; align-items: center; gap: 12px; }
     .book-detail-head .detail-img,
     .book-detail-head .detail-img-placeholder {
-      height: auto; width: min(70vw, 300px); max-width: 100%; font-size: 3rem;
+      /* Cap the cover by viewport HEIGHT so the whole modal — cover, details and
+         the action buttons — fits on screen without the user having to scroll. */
+      height: auto; width: auto;
+      max-height: 40vh; max-width: min(62vw, 240px);
+      font-size: 3rem;
     }
     .book-detail-meta { width: 100%; }
     .book-detail-meta h5 { font-size: 1.2rem; }
+
+    /* Keep the book modal within the viewport and pin its header + footer so the
+       Reserve / Close buttons are always visible; only the body scrolls if the
+       content is taller than the screen. */
+    #bookModal .modal-content { max-height: 92dvh; display: flex; flex-direction: column; }
+    #bookModal .modal-body { overflow-y: auto; }
+    #bookModal .modal-header, #bookModal .modal-footer { flex-shrink: 0; }
   }
 
   /* ── ONE standard book cover for ALL modals (detail, limit, confirm) ── */
