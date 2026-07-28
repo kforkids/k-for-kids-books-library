@@ -1169,6 +1169,38 @@
   </div>
 </div>
 
+<!-- ══════════════ APPROVE CUSTOMER MODAL (admin) ══════════════ -->
+<div class="modal fade" id="approveModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-white"><i class="bi bi-check2-circle me-2"></i>Approve customer</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" style="filter:invert(1)"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-3">Activate <b id="approveCustName"></b> and set their subscription plan.</p>
+        <div class="mb-2">
+          <label class="form-label" for="approvePlan">Subscription plan</label>
+          <select id="approvePlan" class="form-select">
+            <option value="4">4 books / month</option>
+            <option value="6">6 books / month</option>
+            <option value="8">8 books / month</option>
+          </select>
+        </div>
+        <div class="small text-muted">
+          <i class="bi bi-info-circle me-1"></i>Sets the monthly reservation limit and activates the account.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="approveSubmitBtn" onclick="submitApproveCustomer()">
+          <i class="bi bi-check2 me-1"></i>Approve
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ TOAST ══════════════ -->
 <div class="toast-container">
   <div id="appToast" class="toast align-items-center border-0 text-white" role="alert" style="min-width:280px">
@@ -1216,7 +1248,9 @@ const issueModal   = new bootstrap.Modal('#issueModal');
 const customerAuthModal = new bootstrap.Modal('#customerAuthModal');
 const limitModal = new bootstrap.Modal('#limitModal');
 const confirmModal = new bootstrap.Modal('#confirmModal');
+const approveModal = new bootstrap.Modal('#approveModal');
 let pendingReserveBookNo = '';
+let approveCustomerId = ''; // customer currently being approved in the modal
 
 // ════════════════════════════════════════════════
 // Init
@@ -3113,24 +3147,40 @@ function doUpdateStatus(customerName, idx) {
 
 // Approve a pending self-signup: prompt for the plan + monthly limit, then flip
 // the account to Active so the customer can start reserving.
+// Open the Approve modal for a pending customer (plan chosen from a dropdown).
 function doApproveCustomer(customerId, customerName) {
   if (!customerId) { showToast('Missing customer id.', 'danger'); return; }
-  const plan = (prompt('Subscription plan for ' + customerName + ' (e.g. "4 books/month"):', '') || '').trim();
-  const limitStr = (prompt('Monthly reservation limit for ' + customerName + ':', '4') || '').trim();
-  const limit = parseInt(limitStr, 10);
-  if (!(limit > 0)) { showToast('Please enter a positive monthly reservation limit.', 'warning'); return; }
+  approveCustomerId = customerId;
+  document.getElementById('approveCustName').textContent = customerName || customerId;
+  document.getElementById('approvePlan').value = '4'; // default plan
+  approveModal.show();
+}
 
+// Confirm approval: the selected plan value is the monthly reservation limit,
+// and the plan string is derived from it (e.g. "4 books/month").
+function submitApproveCustomer() {
+  if (!approveCustomerId) { showToast('Missing customer id.', 'danger'); return; }
+  const limit = parseInt(document.getElementById('approvePlan').value, 10);
+  if (!(limit > 0)) { showToast('Please choose a subscription plan.', 'warning'); return; }
+  const plan = limit + ' books/month';
+
+  setButtonLoading('approveModal', true);
   google.script.run
     .withSuccessHandler(res => {
+      setButtonLoading('approveModal', false);
       if (res.success) {
+        approveModal.hide();
         showToast(res.message, 'success');
         loadCustomers();
       } else {
         showToast(res.error || 'Approval failed.', 'danger');
       }
     })
-    .withFailureHandler(() => showToast('Something went wrong. Please try again.', 'danger'))
-    .approveCustomer(customerId, plan, limit, adminToken);
+    .withFailureHandler(() => {
+      setButtonLoading('approveModal', false);
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .approveCustomer(approveCustomerId, plan, limit, adminToken);
 }
 
 function toggleAddForm() {
