@@ -1348,7 +1348,7 @@ function bookCardHtml(book) {
                 data-book-no="${escAttr(book.bookNo)}">
     <div class="book-img-wrap">
       ${imgHtml}${placeholder}
-      <span class="status-badge badge-${sc}">${escHtml(book.status)}</span>
+      ${isPendingCustomer() ? '' : `<span class="status-badge badge-${sc}">${escHtml(book.status)}</span>`}
       ${hiddenBadge}
       ${hoverOverlay}
       ${savingOverlay}
@@ -1449,7 +1449,9 @@ function updateStats() {
   const customerSpans = document.querySelectorAll('.stat-customer');
 
   // Anonymous (not admin, not logged-in customer) → hide the whole strip.
-  if (!adminMode && !currentCustomer) {
+  // Pending customers → also hide it: their counts are always 0/0 and none of
+  // the books are theirs, so the strip is just noise until they're approved.
+  if ((!adminMode && !currentCustomer) || isPendingCustomer()) {
     bar.style.display = 'none';
     return;
   }
@@ -2581,6 +2583,13 @@ function renderCustomerState() {
 function isCustomerActive() {
   return Boolean(currentCustomer) &&
     String(currentCustomer.accountStatus || '').toLowerCase() === 'active';
+}
+
+// A logged-in customer whose subscription isn't approved yet. Such users can
+// browse the whole catalog but can't reserve, and none of the books are theirs —
+// so we hide status badges and the "reserved/issued by me" stats for them.
+function isPendingCustomer() {
+  return !adminMode && Boolean(currentCustomer) && !isCustomerActive();
 }
 
 // ════════════════════════════════════════════════
