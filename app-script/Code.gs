@@ -692,7 +692,7 @@ const CUSTOMER_SESSION_SECS = 21600; // 6 hours, CacheService max TTL
 // collection is gated behind login/registration. This keeps the anonymous page
 // light (we never ship ~2000 rows to a non-member's browser) and gives people a
 // concrete reason to sign in. Logged-in customers and admins always see all books.
-const ANON_BOOK_LIMIT = 48;
+const ANON_BOOK_LIMIT = 50;
 
 function getCachedPublicBooks_() {
   const cache  = CacheService.getScriptCache();
@@ -872,10 +872,10 @@ function getBooks(filters, adminCredential, customerToken) {
 }
 
 /**
- * Build the getBooks response for an anonymous visitor: cap the list to
- * ANON_BOOK_LIMIT and report the true total so the client can show a "showing X
- * of N — log in to see all" prompt. Applied to both the cache-hit and freshly
- * built paths so the preview limit is enforced in one place.
+ * Build the getBooks response for an anonymous visitor: show a RANDOM sample of
+ * ANON_BOOK_LIMIT books (not the first N by book-number order), so the preview
+ * feels like a varied taste of the collection and changes between visits. The
+ * cached public list is the full set; the random pick happens here on each call.
  */
 function anonBooksResponse_(books) {
   const list = Array.isArray(books) ? books : [];
@@ -883,11 +883,25 @@ function anonBooksResponse_(books) {
   const capped = total > ANON_BOOK_LIMIT;
   return {
     success: true,
-    books: capped ? list.slice(0, ANON_BOOK_LIMIT) : list,
+    books: capped ? randomSample_(list, ANON_BOOK_LIMIT) : list,
     totalCount: total,
     capped: capped,
     previewLimit: ANON_BOOK_LIMIT
   };
+}
+
+/**
+ * Return a random sample of `count` items from `list` (partial Fisher–Yates on a
+ * shallow copy, so the source array is not mutated).
+ */
+function randomSample_(list, count) {
+  const arr = list.slice();
+  const n = Math.min(count, arr.length);
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (arr.length - i));
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+  return arr.slice(0, n);
 }
 
 function warmImageCache() {

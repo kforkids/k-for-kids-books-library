@@ -726,8 +726,7 @@
 <div class="preview-banner" id="previewBanner" style="display:none">
   <span class="preview-banner-text">
     <i class="bi bi-lock-fill me-1"></i>
-    You're viewing a free preview. <b>Log in or sign up</b> to browse all
-    <b id="previewBannerTotal">the</b> books.
+    You're viewing a free preview. <b>Log in or sign up</b> to view the full collection.
   </span>
   <span class="preview-banner-actions">
     <button class="btn btn-sm btn-warning fw-bold" onclick="openAuthModal('register')">
@@ -1520,11 +1519,8 @@ function renderPreviewCta() {
   // The whole preview is already in hand — don't leave the infinite-scroll
   // spinner implying more books are loading; the CTA is the end of the list.
   document.getElementById('scrollSentinel').style.display = 'none';
-  const shown = filtered.length;
-  const total = previewTotalCount || shown;
-  document.getElementById('previewCtaSub').innerHTML =
-    `You're viewing <b>${shown}</b> of <b>${total}</b> books. ` +
-    `Log in or create a free account to browse the entire collection.`;
+  document.getElementById('previewCtaSub').textContent =
+    'Log in or sign up to view the full collection.';
   cta.style.display = '';
 }
 
@@ -1535,8 +1531,6 @@ function updatePreviewBanner_() {
   if (!banner) return;
   const isAnon = !adminMode && !currentCustomer;
   banner.style.display = isAnon ? '' : 'none';
-  const totalEl = document.getElementById('previewBannerTotal');
-  if (totalEl) totalEl.textContent = previewTotalCount ? previewTotalCount.toLocaleString() : 'the';
 }
 
 function updateStats() {
