@@ -3444,3 +3444,7 @@ function formatDateTime_(val, tz) {
   try { return Utilities.formatDate(new Date(val), tz, 'dd/MM/yyyy HH:mm:ss'); }
   catch (e) { return String(val); }
 }
+
+function authorizeMail() {
+  MailApp.sendEmail("yogeshrnaik@gmail.com", 'K for Kids — auth test', 'Mail authorization works.');
+}
