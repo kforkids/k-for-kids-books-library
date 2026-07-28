@@ -33,6 +33,16 @@
   .app-header h1 { font-size: 1.15rem; margin: 0; font-weight: 700; }
   .app-header .subtitle { font-size: .75rem; opacity: .85; }
 
+  /* WhatsApp contact button (always visible in the sticky header) */
+  .whatsapp-btn {
+    background: #25D366; color: #fff; border: none; font-weight: 600;
+    display: inline-flex; align-items: center;
+  }
+  .whatsapp-btn:hover { background: #1ebe5b; color: #fff; }
+  .whatsapp-btn i { font-size: 1.05rem; }
+  /* Save space on phones — icon only. */
+  @media (max-width: 480px) { .whatsapp-label { display: none; } }
+
   .sticky-controls {
     position: sticky;
     top: var(--app-header-height);
@@ -467,6 +477,10 @@
     <span id="adminModeBadge" style="display:none" class="admin-mode-badge">
       <i class="bi bi-shield-check me-1"></i>Admin Mode
     </span>
+    <a class="btn btn-sm whatsapp-btn" href="https://wa.me/919309132825" target="_blank" rel="noopener"
+       title="Chat with us on WhatsApp" aria-label="Chat with us on WhatsApp">
+      <i class="bi bi-whatsapp"></i><span class="whatsapp-label ms-1">WhatsApp</span>
+    </a>
     <button id="customerLoginBtn" class="btn btn-sm btn-light" onclick="openCustomerAuth()" title="Login">
       <i class="bi bi-person-circle me-1"></i>Login
     </button>
