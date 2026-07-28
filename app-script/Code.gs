@@ -873,17 +873,19 @@ function getBooks(filters, adminCredential, customerToken) {
 
 /**
  * Build the getBooks response for an anonymous visitor: show a RANDOM sample of
- * ANON_BOOK_LIMIT books (not the first N by book-number order), so the preview
- * feels like a varied taste of the collection and changes between visits. The
- * cached public list is the full set; the random pick happens here on each call.
+ * ANON_BOOK_LIMIT books that HAVE a cover image (never the blank-cover ones), so
+ * the preview always looks good and changes between visits. Books without an
+ * image are excluded from the anonymous preview entirely. The cached public list
+ * is the full set; the filter + random pick happen here on each call.
  */
 function anonBooksResponse_(books) {
   const list = Array.isArray(books) ? books : [];
-  const total = list.length;
+  const withImage = list.filter(b => b && b.imageUrl);
+  const total = withImage.length;
   const capped = total > ANON_BOOK_LIMIT;
   return {
     success: true,
-    books: capped ? randomSample_(list, ANON_BOOK_LIMIT) : list,
+    books: capped ? randomSample_(withImage, ANON_BOOK_LIMIT) : randomSample_(withImage, total),
     totalCount: total,
     capped: capped,
     previewLimit: ANON_BOOK_LIMIT
