@@ -672,7 +672,7 @@ function setupCustomerReservationSystem(adminCredential, options) {
     summary.messages.push('Live reservations use Books-DB only.');
     return summary;
   } catch (err) {
-    return reportError_('setupCustomerReservationSystem', err);
+    return reportError_('setupCustomerReservationSystem', err, adminCredential);
   }
 }
 
@@ -853,7 +853,7 @@ function getBooks(filters, adminCredential, customerToken) {
 
     return { success: true, books };
   } catch (err) {
-    return reportError_('getBooks', err);
+    return reportError_('getBooks', err, adminCredential);
   }
 }
 
@@ -1249,7 +1249,7 @@ function issueBook(bookNo, customerId, customerName, adminCredential) {
       message: '✅ Book issued to ' + customerName + '. Due ' + formatDate_(dueDate, Session.getScriptTimeZone()) + '.'
     };
   } catch (err) {
-    return reportError_('issueBook', err);
+    return reportError_('issueBook', err, adminCredential);
   }
 }
 
@@ -1293,7 +1293,7 @@ function returnBook(bookNo, adminCredential) {
     invalidatePublicBooksCache_();
     return { success: true, message: '✅ Book marked as returned and available.' };
   } catch (err) {
-    return reportError_('returnBook', err);
+    return reportError_('returnBook', err, adminCredential);
   }
 }
 
@@ -1329,7 +1329,7 @@ function cancelReservation(bookNo, adminCredential) {
     invalidatePublicBooksCache_();
     return { success: true, message: '✅ Reservation cancelled.' };
   } catch (err) {
-    return reportError_('cancelReservation', err);
+    return reportError_('cancelReservation', err, adminCredential);
   }
 }
 
@@ -1355,7 +1355,7 @@ function setBookVisibility(bookNo, visible, adminCredential) {
       message: visible ? '✅ Book is now visible to everyone.' : '✅ Book hidden from end users.'
     };
   } catch (err) {
-    return reportError_('setBookVisibility', err);
+    return reportError_('setBookVisibility', err, adminCredential);
   }
 }
 
@@ -1702,7 +1702,7 @@ function getCustomers(adminCredential) {
     }
     return { success: true, customers };
   } catch (err) {
-    return reportError_('getCustomers', err);
+    return reportError_('getCustomers', err, adminCredential);
   }
 }
 
@@ -1758,7 +1758,7 @@ function addCustomer(name, dateStart, location, address, adminCredential) {
       inviteCode
     };
   } catch (err) {
-    return reportError_('addCustomer', err);
+    return reportError_('addCustomer', err, adminCredential);
   }
 }
 
@@ -1786,7 +1786,7 @@ function updateCustomerStatus(customerName, newStatus, adminCredential) {
     }
     return { success: false, error: 'Customer "' + customerName + '" not found.' };
   } catch (err) {
-    return reportError_('updateCustomerStatus', err);
+    return reportError_('updateCustomerStatus', err, adminCredential);
   }
 }
 
@@ -3040,8 +3040,17 @@ function callerKey_() {
   }
 }
 
-function reportError_(context, err) {
-  Logger.log(context + ' error: ' + (err && err.message ? err.message : err));
+// Standard error response. Always logs the real error. When adminCredential is
+// a valid admin session, the real message is also returned to the client (in
+// `error` + `adminDetail`) so config/sheet issues are diagnosable in-app; for
+// everyone else the message stays generic (no internal details leak).
+function reportError_(context, err, adminCredential) {
+  const detail = (err && err.message) ? err.message : String(err);
+  Logger.log(context + ' error: ' + detail + (err && err.stack ? '\n' + err.stack : ''));
+
+  if (adminCredential && verifyAdminCredential_(adminCredential)) {
+    return { success: false, error: '[' + context + '] ' + detail, adminDetail: detail };
+  }
   return { success: false, error: 'Something went wrong. Please try again.' };
 }
 

@@ -935,7 +935,14 @@ function loadBooks() {
 
 function onBooksLoaded(result) {
   showLoading(false);
-  if (!result.success) { showToast(result.error || 'Failed to load books.', 'danger'); return; }
+  if (!result.success) {
+    const msg = result.error || 'Failed to load books.';
+    // Admin gets the real (detailed) error in a persistent banner so config /
+    // sheet problems are diagnosable; regular users get a brief toast.
+    if (adminMode || result.adminDetail) showBanner(msg, 'danger', 0);
+    else showToast(msg, 'danger');
+    return;
+  }
   allBooks = result.books || [];
   allBooks.sort((a, b) => (b.imageUrl ? 1 : 0) - (a.imageUrl ? 1 : 0));
   renderAgeGroupFilters();
