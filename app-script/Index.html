@@ -955,6 +955,9 @@
         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
+        <!-- Inline error shown inside the modal (not a bottom toast) so it's
+             right next to the form the user is filling in. -->
+        <div id="customerAuthError" class="alert alert-danger py-2 px-3 small mb-3" style="display:none"></div>
         <!-- ── LOGIN (default): one form for customers AND admins ── -->
         <div id="loginPane">
           <form id="customerLoginForm" onsubmit="return false;" autocomplete="on">
@@ -2607,14 +2610,28 @@ function openCustomerAuth() {
   document.getElementById('registerPhone').value = '';
   document.getElementById('registerEmail').value = '';
   document.getElementById('registerPassword').value = '';
+  clearAuthError_();
   showLoginPane(); // default to login; openAuthModal() may switch the pane after
   customerAuthModal.show();
+}
+
+// Inline error inside the auth modal (shown next to the form, not as a toast).
+function showAuthError_(msg) {
+  const el = document.getElementById('customerAuthError');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.display = '';
+}
+function clearAuthError_() {
+  const el = document.getElementById('customerAuthError');
+  if (el) { el.textContent = ''; el.style.display = 'none'; }
 }
 
 // Switch the auth modal between its three panes: login, register (self-signup),
 // and invite-code (claim). Only one is visible at a time, and the footer submit
 // button label tracks the active pane.
 function setAuthPane_(active) {
+  clearAuthError_(); // don't carry an error from one pane to another
   const panes = { login: 'loginPane', register: 'registerPane', invite: 'claimPane' };
   Object.keys(panes).forEach(key => {
     document.getElementById(panes[key]).style.display = key === active ? '' : 'none';
@@ -2643,7 +2660,8 @@ function submitCustomerAuth() {
 function doLogin() {
   const identifier = document.getElementById('loginIdentifier').value.trim();
   const password = document.getElementById('loginPassword').value;
-  if (!identifier || !password) { showToast('Enter your email/phone (or admin username) and password.', 'warning'); return; }
+  clearAuthError_();
+  if (!identifier || !password) { showAuthError_('Enter your email/phone (or admin username) and password.'); return; }
 
   setButtonLoading('customerAuthModal', true);
   google.script.run
@@ -2666,7 +2684,7 @@ function doLogin() {
     })
     .withFailureHandler(() => {
       setButtonLoading('customerAuthModal', false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      showAuthError_('Something went wrong. Please try again.');
     })
     .login(identifier, password);
 }
@@ -2678,8 +2696,9 @@ function claimExistingCustomer() {
   const phone = document.getElementById('claimPhone').value.trim();
   const password = document.getElementById('claimPassword').value;
 
+  clearAuthError_();
   if (!customerId || !inviteCode || !email || !phone || !password) {
-    showToast('Customer ID, invite code, email, phone, and password are all required.', 'warning');
+    showAuthError_('Customer ID, invite code, email, phone, and password are all required.');
     return;
   }
 
@@ -2688,7 +2707,7 @@ function claimExistingCustomer() {
     .withSuccessHandler(res => handleCustomerAuthResponse(res))
     .withFailureHandler(() => {
       setButtonLoading('customerAuthModal', false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      showAuthError_('Something went wrong. Please try again.');
     })
     .claimExistingCustomer(customerId, inviteCode, email, password, phone);
 }
@@ -2700,17 +2719,18 @@ function selfSignupCustomer() {
   const phone = document.getElementById('registerPhone').value.trim();
   const password = document.getElementById('registerPassword').value;
 
-  if (!name) { showToast('Please enter your name.', 'warning'); return; }
-  if (!email) { showToast('Email is required — it will be your login.', 'warning'); return; }
-  if (!phone) { showToast('Phone number is required.', 'warning'); return; }
-  if (!password || password.length < 8) { showToast('Password must be at least 8 characters.', 'warning'); return; }
+  clearAuthError_();
+  if (!name) { showAuthError_('Please enter your name.'); return; }
+  if (!email) { showAuthError_('Email is required — it will be your login.'); return; }
+  if (!phone) { showAuthError_('Phone number is required.'); return; }
+  if (!password || password.length < 8) { showAuthError_('Password must be at least 8 characters.'); return; }
 
   setButtonLoading('customerAuthModal', true);
   google.script.run
     .withSuccessHandler(res => handleCustomerAuthResponse(res))
     .withFailureHandler(() => {
       setButtonLoading('customerAuthModal', false);
-      showToast('Something went wrong. Please try again.', 'danger');
+      showAuthError_('Something went wrong. Please try again.');
     })
     .selfSignupCustomer(name, email, phone, password);
 }
@@ -2740,7 +2760,7 @@ function handleCustomerAuthResponse(res) {
       pendingReserveBookNo = '';
     }
   } else {
-    showToast((res && res.error) || 'Login failed.', 'danger');
+    showAuthError_((res && res.error) || 'Login failed.');
   }
 }
 
