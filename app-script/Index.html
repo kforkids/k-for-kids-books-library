@@ -1522,7 +1522,11 @@ function openBookDetail(bookNo) {
     : `<div class="detail-img-placeholder"><i class="bi bi-book"></i></div>`;
 
   const sc    = statusClass(book.status);
-  const pill  = `<span class="status-pill pill-${sc}">${escHtml(book.status)}</span>`;
+  // Status pill only for users who can act on availability (admins + active
+  // customers). Anonymous and pending users can't reserve/borrow, so it's noise.
+  const pill  = canSeeBookStatus()
+    ? `<span class="status-pill pill-${sc}">${escHtml(book.status)}</span>`
+    : '';
 
   let reservationInfo = '';
   if (book.status === 'Reserved') {
@@ -1549,7 +1553,9 @@ function openBookDetail(bookNo) {
            <div><i class="bi bi-bookmark-check-fill me-1"></i><b>You've reserved this book.</b> Use “Unreserve” below to cancel it.</div>
            ${whenLine}
          </div>`;
-    } else {
+    } else if (canSeeBookStatus()) {
+      // Active customer (or admin, handled above): explain it's taken so they
+      // know why they can't reserve it. Anonymous/pending users see nothing.
       reservationInfo = `<div class="alert alert-warning py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
            <i class="bi bi-bookmark-fill me-1"></i>
            This book is currently reserved.
@@ -1573,7 +1579,8 @@ function openBookDetail(bookNo) {
            <div><i class="bi bi-person-check-fill me-1"></i><b>You've borrowed this book.</b></div>
            ${dueLine}
          </div>`;
-    } else {
+    } else if (canSeeBookStatus()) {
+      // Active customer: explain it's out. Anonymous/pending users see nothing.
       reservationInfo = `<div class="alert alert-danger py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
            <i class="bi bi-person-fill me-1"></i>
            This book is currently issued out.
