@@ -1372,7 +1372,7 @@ function bookCardHtml(book) {
                 data-book-no="${escAttr(book.bookNo)}">
     <div class="book-img-wrap">
       ${imgHtml}${placeholder}
-      ${isPendingCustomer() ? '' : `<span class="status-badge badge-${sc}">${escHtml(book.status)}</span>`}
+      ${canSeeBookStatus() ? `<span class="status-badge badge-${sc}">${escHtml(book.status)}</span>` : ''}
       ${hiddenBadge}
       ${hoverOverlay}
       ${savingOverlay}
@@ -2625,6 +2625,14 @@ function isCustomerActive() {
 // so we hide status badges and the "reserved/issued by me" stats for them.
 function isPendingCustomer() {
   return !adminMode && Boolean(currentCustomer) && !isCustomerActive();
+}
+
+// The Available / Reserved / Issued badge only means something to users who can
+// act on it: admins (who manage books) and active, approved customers (who can
+// reserve). Anonymous visitors and pending customers can't reserve or borrow, so
+// the badge is just noise on their catalog preview — hide it for them.
+function canSeeBookStatus() {
+  return adminMode || isCustomerActive();
 }
 
 // ════════════════════════════════════════════════
