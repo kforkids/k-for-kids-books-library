@@ -100,7 +100,31 @@
     gap: 16px;
     flex-wrap: wrap;
   }
-  .stats-bar span { display: flex; align-items: center; gap: 4px; }
+  .stats-bar span, .stats-bar .stat-link { display: flex; align-items: center; gap: 4px; }
+
+  /* Clickable "reserved by me / issued to me" stats. */
+  .stat-link {
+    color: inherit;
+    text-decoration: none;
+    padding: 2px 8px;
+    border-radius: 14px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background .12s, border-color .12s;
+  }
+  .stat-link:hover { background: rgba(0,0,0,.05); text-decoration: none; color: inherit; }
+  .stat-link.active {
+    background: #fff;
+    border-color: var(--brand);
+    color: var(--brand);
+    font-weight: 600;
+  }
+  .stat-link.active::after {
+    content: "\00d7";  /* × — hints that clicking again clears the filter */
+    margin-left: 6px;
+    font-weight: 700;
+    opacity: .7;
+  }
 
   /* ── Book grid ── */
   .books-grid {
@@ -724,9 +748,13 @@
   <span class="stat-admin"><i class="bi bi-check-circle" style="color:#43a047"></i> <b id="statAvailable">0</b> available</span>
   <span class="stat-admin"><i class="bi bi-bookmark" style="color:orange"></i> <b id="statReserved">0</b> reserved</span>
   <span class="stat-admin"><i class="bi bi-person-check" style="color:#e53935"></i> <b id="statIssued">0</b> issued</span>
-  <!-- Customer-only stats (their own) -->
-  <span class="stat-customer" style="display:none"><i class="bi bi-bookmark" style="color:orange"></i> <b id="statMyReserved">0</b> reserved by me</span>
-  <span class="stat-customer" style="display:none"><i class="bi bi-person-check" style="color:#e53935"></i> <b id="statMyIssued">0</b> issued to me</span>
+  <!-- Customer-only stats (their own) — clickable to filter to those books. -->
+  <a href="#" class="stat-customer stat-link" id="statMyReservedLink" style="display:none"
+     onclick="toggleMineFilter('reserved'); return false;">
+    <i class="bi bi-bookmark" style="color:orange"></i> <b id="statMyReserved">0</b> reserved by me</a>
+  <a href="#" class="stat-customer stat-link" id="statMyIssuedLink" style="display:none"
+     onclick="toggleMineFilter('issued'); return false;">
+    <i class="bi bi-person-check" style="color:#e53935"></i> <b id="statMyIssued">0</b> issued to me</a>
 </div>
 
 <!-- ══════════════ MAIN CONTENT ══════════════ -->
@@ -1105,7 +1133,9 @@ let currentCustomer = null;
 let previewCapped     = false;
 let previewTotalCount = 0;
 let searchTimer  = null;
-let filters      = { language: '', ageGroup: '', status: '', search: '', withImage: false };
+// `mine`: '' (all) | 'reserved' | 'issued' — filters to the logged-in customer's
+// own reserved / issued books, toggled from the stats strip links.
+let filters      = { language: '', ageGroup: '', status: '', search: '', withImage: false, mine: '' };
 // PERF: cache the logged-in customer's active reservations for the session so
 // opening a reserved book's detail modal doesn't fire a full-sheet server scan
 // (getMyReservations) every single time. Invalidated on reserve/unreserve.
@@ -1204,6 +1234,8 @@ function applyFilters() {
   const st = filters.status.toLowerCase();
 
   filtered = allBooks.filter(b => {
+    if (filters.mine === 'reserved' && !(b.status === 'Reserved' && b.isMyReservation)) return false;
+    if (filters.mine === 'issued'   && !b.isMyIssue) return false;
     if (lg && b.language.toLowerCase() !== lg) return false;
     if (ag && ageGroupFilterValue(b.ageGroup) !== ag) return false;
     if (st && b.status.toLowerCase()   !== st) return false;
@@ -1245,6 +1277,13 @@ function toggleImageFilter(el) {
   applyFilters();
 }
 
+// Stats-strip links: filter to the customer's own reserved / issued books.
+// Clicking the same one again clears it (toggle back to all books).
+function toggleMineFilter(type) {
+  filters.mine = filters.mine === type ? '' : type;
+  applyFilters();
+}
+
 // Populate the Age dropdown from the age groups present in the collection.
 function renderAgeGroupFilters() {
   const select = document.getElementById('filterAge');
@@ -1269,7 +1308,7 @@ function renderAgeGroupFilters() {
 }
 
 function resetFilters() {
-  filters = { language: '', ageGroup: '', status: '', search: '', withImage: false };
+  filters = { language: '', ageGroup: '', status: '', search: '', withImage: false, mine: '' };
   const lang = document.getElementById('filterLanguage'); if (lang) lang.value = '';
   const age  = document.getElementById('filterAge');      if (age)  age.value = '';
   const stat = document.getElementById('filterStatus');   if (stat) stat.value = '';
@@ -1435,10 +1474,17 @@ function updateStats() {
     // Logged-in customer sees only their own counts.
     adminSpans.forEach(s => s.style.display = 'none');
     customerSpans.forEach(s => s.style.display = '');
+    // Count against the full list (allBooks) so the totals don't shrink when a
+    // "mine" filter is active.
     const myReserved = allBooks.filter(b => b.status === 'Reserved' && b.isMyReservation).length;
     const myIssued   = allBooks.filter(b => b.isMyIssue).length; // populated in Part 2
     document.getElementById('statMyReserved').textContent = myReserved;
     document.getElementById('statMyIssued').textContent   = myIssued;
+    // Reflect which "mine" filter is currently active on the links.
+    const resLink = document.getElementById('statMyReservedLink');
+    const issLink = document.getElementById('statMyIssuedLink');
+    if (resLink) resLink.classList.toggle('active', filters.mine === 'reserved');
+    if (issLink) issLink.classList.toggle('active', filters.mine === 'issued');
   }
 }
 
