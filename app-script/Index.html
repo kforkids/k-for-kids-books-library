@@ -542,10 +542,14 @@
 
 <!-- ══════════════ STATS ══════════════ -->
 <div class="stats-bar" id="statsBar" style="display:none">
-  <span><i class="bi bi-collection text-muted"></i> <b id="statTotal">0</b> books</span>
-  <span><i class="bi bi-check-circle" style="color:#43a047"></i> <b id="statAvailable">0</b> available</span>
-  <span><i class="bi bi-bookmark" style="color:orange"></i> <b id="statReserved">0</b> reserved</span>
-  <span><i class="bi bi-person-check" style="color:#e53935"></i> <b id="statIssued">0</b> issued</span>
+  <!-- Admin-only stats (all books) -->
+  <span class="stat-admin"><i class="bi bi-collection text-muted"></i> <b id="statTotal">0</b> books</span>
+  <span class="stat-admin"><i class="bi bi-check-circle" style="color:#43a047"></i> <b id="statAvailable">0</b> available</span>
+  <span class="stat-admin"><i class="bi bi-bookmark" style="color:orange"></i> <b id="statReserved">0</b> reserved</span>
+  <span class="stat-admin"><i class="bi bi-person-check" style="color:#e53935"></i> <b id="statIssued">0</b> issued</span>
+  <!-- Customer-only stats (their own) -->
+  <span class="stat-customer" style="display:none"><i class="bi bi-bookmark" style="color:orange"></i> <b id="statMyReserved">0</b> reserved by me</span>
+  <span class="stat-customer" style="display:none"><i class="bi bi-person-check" style="color:#e53935"></i> <b id="statMyIssued">0</b> issued to me</span>
 </div>
 
 <!-- ══════════════ MAIN CONTENT ══════════════ -->
@@ -1097,15 +1101,34 @@ function renderGrid() {
 }
 
 function updateStats() {
-  const avail    = allBooks.filter(b => b.status === 'Available').length;
-  const reserved = allBooks.filter(b => b.status === 'Reserved').length;
-  const issued   = allBooks.filter(b => b.status === 'Issued').length;
+  const bar = document.getElementById('statsBar');
+  const adminSpans    = document.querySelectorAll('.stat-admin');
+  const customerSpans = document.querySelectorAll('.stat-customer');
 
-  document.getElementById('statTotal').textContent     = allBooks.length;
-  document.getElementById('statAvailable').textContent = avail;
-  document.getElementById('statReserved').textContent  = reserved;
-  document.getElementById('statIssued').textContent    = issued;
-  document.getElementById('statsBar').style.display    = '';
+  // Anonymous (not admin, not logged-in customer) → hide the whole strip.
+  if (!adminMode && !currentCustomer) {
+    bar.style.display = 'none';
+    return;
+  }
+  bar.style.display = '';
+
+  if (adminMode) {
+    // Admin sees the full library stats.
+    adminSpans.forEach(s => s.style.display = '');
+    customerSpans.forEach(s => s.style.display = 'none');
+    document.getElementById('statTotal').textContent     = allBooks.length;
+    document.getElementById('statAvailable').textContent = allBooks.filter(b => b.status === 'Available').length;
+    document.getElementById('statReserved').textContent  = allBooks.filter(b => b.status === 'Reserved').length;
+    document.getElementById('statIssued').textContent    = allBooks.filter(b => b.status === 'Issued').length;
+  } else {
+    // Logged-in customer sees only their own counts.
+    adminSpans.forEach(s => s.style.display = 'none');
+    customerSpans.forEach(s => s.style.display = '');
+    const myReserved = allBooks.filter(b => b.status === 'Reserved' && b.isMyReservation).length;
+    const myIssued   = allBooks.filter(b => b.isMyIssue).length; // populated in Part 2
+    document.getElementById('statMyReserved').textContent = myReserved;
+    document.getElementById('statMyIssued').textContent   = myIssued;
+  }
 }
 
 // ════════════════════════════════════════════════
