@@ -14,21 +14,38 @@ API**.
 | Path | Who you can message | Cost | Setup |
 |---|---|---|---|
 | **Free test number** | Up to **5** pre-verified numbers only | ₹0 | Minimal — no billing, no verification |
-| **Registered real number** (this doc) | **Any opted-in member** | Pay per message (~₹0.11–0.14) | Full — migrate number + billing + verification |
+| **New dedicated number** (this doc) | **Any opted-in member** | Pay per message (~₹0.11–0.14) | Full — register new number + billing + verification |
 
 The free test number is fine only for a fixed set of family members. To notify
 **any library member who registers in the app**, you must use a real registered
 number — the steps below.
 
+> **This guide uses a NEW number dedicated to WhatsApp reminders + OTP**, so your
+> existing WhatsApp Business number stays completely untouched (you keep using it
+> on the WhatsApp Business app as normal). This is also simpler than migrating —
+> no chat backup, no losing the app.
+
 ---
 
-## Option 2: Migrate your existing WhatsApp Business number to the Cloud API
+## Get a new number dedicated to WhatsApp API
 
-> ⚠️ **You will lose the WhatsApp Business _app_ on this number.** A number can
-> live in only one place — the app **or** the Cloud API, never both. Migration
-> deactivates the app for that number and **chat history does not transfer**.
-> Back up chats first (app → Settings → Chats → Chat backup) for your own
-> records only; it cannot be imported into the API.
+### Choosing the number — key rule
+> ⚠️ The number you register **must NOT be active on the WhatsApp or WhatsApp
+> Business app.** A number can live in only one place — an app **or** the Cloud
+> API, never both.
+
+Good options for a fresh number:
+- **A new SIM / mobile number** (prepaid is fine) that you have **never installed
+  WhatsApp on**. Cheapest and easiest.
+- **A second number on a dual-SIM phone**, as long as WhatsApp is not registered
+  on it.
+- **A landline / VoIP number** that can receive an SMS **or a voice call** (Meta
+  verifies via either). The number only needs to receive the one-time
+  verification code — it does **not** need to stay in a phone afterward; the
+  Cloud API runs entirely in Meta's cloud.
+
+You do **not** need to install WhatsApp on the new number. Just keep the SIM able
+to receive the verification SMS/call during setup.
 
 ### Prerequisites
 - A **Meta Business Portfolio** (Business Manager) — https://business.facebook.com
@@ -36,20 +53,20 @@ number — the steps below.
   https://developers.facebook.com — this creates your **WhatsApp Business
   Account (WABA)**.
 
-### 1. Prep the number in the WhatsApp Business app
-- **Back up chats** (they will be lost on this number).
-- **Disable two-step verification PIN**: app → Settings → Account →
-  Two-step verification → Turn off. Avoids "incorrect PIN" errors; you set a
-  fresh PIN during registration.
+### 1. Get the new number ready
+- Have the new SIM/number reachable so it can receive an **SMS or voice call**
+  with the verification code.
+- Nothing to back up and nothing to disable — this is a clean number not tied to
+  any WhatsApp app.
 
-### 2. Add + verify the number in WhatsApp Manager
+### 2. Add + verify the new number in WhatsApp Manager
 - WhatsApp Manager → your WABA → **Phone numbers → Add phone number**.
 - Enter a **display name** (e.g. "K for Kids Library") + business details.
-- Meta detects the number is on the Business app and starts the migration flow.
+- Enter the **new phone number**.
 - **Verify ownership via OTP** — Meta sends a 6-digit code by **SMS or voice
-  call** (pick voice if SMS is unreliable).
-- **Set a new 6-digit PIN** → the number is registered and live on the Cloud API.
-- The old app account for that number is deactivated as part of this.
+  call** (pick voice if SMS is unreliable, e.g. a landline/VoIP number).
+- **Set a 6-digit PIN** (two-step verification for the API number — store it
+  safely) → the number is registered and live on the Cloud API.
 
 ### 3. Add billing (post-paid card)
 - WhatsApp Manager → **Billing & payments** → add a **credit/debit card**,
@@ -166,6 +183,10 @@ rates periodically.
 - The two things you cannot skip to message arbitrary members: a **registered
   real number + billing** (removes the 5-recipient cap) and **business
   verification** (gets past 250/24h).
+- Using a **new dedicated number** (not your existing WhatsApp Business number)
+  keeps your current business number fully usable on the WhatsApp app — the two
+  do not interfere. The only requirement is that the new number is **not**
+  registered on any WhatsApp app.
 
 ---
 
