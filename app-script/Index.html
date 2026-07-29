@@ -805,11 +805,19 @@
 
 <!-- ══════════════ STATS ══════════════ -->
 <div class="stats-bar" id="statsBar" style="display:none">
-  <!-- Admin-only stats (all books) -->
-  <span class="stat-admin"><i class="bi bi-collection text-muted"></i> <b id="statTotal">0</b> books</span>
-  <span class="stat-admin"><i class="bi bi-check-circle" style="color:#43a047"></i> <b id="statAvailable">0</b> available</span>
-  <span class="stat-admin"><i class="bi bi-bookmark" style="color:orange"></i> <b id="statReserved">0</b> reserved</span>
-  <span class="stat-admin"><i class="bi bi-person-check" style="color:#e53935"></i> <b id="statIssued">0</b> issued</span>
+  <!-- Admin-only stats (all books) — clickable to filter the grid by status. -->
+  <a href="#" class="stat-admin stat-link" id="statTotalLink"
+     onclick="setStatusFilter(''); return false;">
+    <i class="bi bi-collection text-muted"></i> <b id="statTotal">0</b> books</a>
+  <a href="#" class="stat-admin stat-link" id="statAvailableLink"
+     onclick="setStatusFilter('available'); return false;">
+    <i class="bi bi-check-circle" style="color:#43a047"></i> <b id="statAvailable">0</b> available</a>
+  <a href="#" class="stat-admin stat-link" id="statReservedLink"
+     onclick="setStatusFilter('reserved'); return false;">
+    <i class="bi bi-bookmark" style="color:orange"></i> <b id="statReserved">0</b> reserved</a>
+  <a href="#" class="stat-admin stat-link" id="statIssuedLink"
+     onclick="setStatusFilter('issued'); return false;">
+    <i class="bi bi-person-check" style="color:#e53935"></i> <b id="statIssued">0</b> issued</a>
   <!-- Customer-only stats (their own) — clickable to filter to those books. -->
   <a href="#" class="stat-customer stat-link" id="statMyReservedLink" style="display:none"
      onclick="toggleMineFilter('reserved'); return false;">
@@ -1535,6 +1543,18 @@ function toggleMineFilter(type) {
   applyFilters();
 }
 
+// Admin stats-strip links: filter the grid by book status. '' = all books.
+// Clicking the active status again clears it (toggle back to all). Keeps the
+// toolbar Status dropdown in sync so the two controls never disagree.
+function setStatusFilter(status) {
+  filters.status = filters.status === status ? '' : status;
+  const dropdown = document.getElementById('filterStatus');
+  if (dropdown) dropdown.value = filters.status;
+  applyFilters();
+  // Jump to the results so the filtered list is visible below the stats strip.
+  document.querySelector('main').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 // Populate the Age dropdown from the age groups present in the collection.
 function renderAgeGroupFilters() {
   const select = document.getElementById('filterAge');
@@ -1731,6 +1751,12 @@ function updateStats() {
     document.getElementById('statAvailable').textContent = allBooks.filter(b => b.status === 'Available').length;
     document.getElementById('statReserved').textContent  = allBooks.filter(b => b.status === 'Reserved').length;
     document.getElementById('statIssued').textContent    = allBooks.filter(b => b.status === 'Issued').length;
+    // Reflect the active status filter on the three status links — the active
+    // one gets the ::after × pill hinting "click again to clear". "books"
+    // (total) is a plain reset link, so it never shows the active pill.
+    document.getElementById('statAvailableLink').classList.toggle('active', filters.status === 'available');
+    document.getElementById('statReservedLink').classList.toggle('active', filters.status === 'reserved');
+    document.getElementById('statIssuedLink').classList.toggle('active', filters.status === 'issued');
   } else {
     // Logged-in customer sees only their own counts.
     adminSpans.forEach(s => s.style.display = 'none');
