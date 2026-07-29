@@ -2088,11 +2088,24 @@ function getCustomers(adminCredential) {
   }
 }
 
-function addCustomer(name, dateStart, location, address, adminCredential) {
+function addCustomer(name, dateStart, location, address, email, phone, adminCredential) {
   try {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
     name = trim_(name);
+    email = normalizeEmail_(email);
+    phone = normalizePhone_(phone);
     if (!name) return { success: false, error: 'Customer name is required.' };
+
+    // Email AND phone are mandatory for admin-added customers too, so every
+    // record has contact info up front (matches self-signup / invite-claim).
+    if (!email) return { success: false, error: 'Email address is required.' };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { success: false, error: 'Please enter a valid email address.' };
+    }
+    if (!phone) return { success: false, error: 'Phone number is required.' };
+    if (phone.replace(/\D/g, '').length < 10) {
+      return { success: false, error: 'Please enter a valid 10-digit phone number.' };
+    }
 
     // Create a complete Customer-Details row: Customer ID, defaults, and an
     // invite code so the customer can later claim their login.
@@ -2102,10 +2115,22 @@ function addCustomer(name, dateStart, location, address, adminCredential) {
     const headerValues = sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0];
     const headerMap = getHeaderMap_(headerValues);
     const columns = buildCustomerDetailsColumns_(headerMap);
+    // buildCustomerDetailsColumns_ intentionally omits Email/Phone; resolve them
+    // here for the duplicate check and the row write.
+    const emailCol = getHeaderIndex_(headerMap, 'Email');
+    const phoneCol = getHeaderIndex_(headerMap, 'Phone');
     const existing = readExistingCustomerDetails_(sheet, headerRow, columns);
 
-    // Next legacy Sr No (kept for continuity with the migrated data).
+    // Reject duplicates so a new customer never forks an existing account.
     const data = sheet.getDataRange().getValues();
+    if (emailCol !== -1 && findCustomerDetailsRow_(data, headerRow, { email: emailCol }, { email })) {
+      return { success: false, error: 'A customer with this email already exists.' };
+    }
+    if (phoneCol !== -1 && findCustomerDetailsRow_(data, headerRow, { phone: phoneCol }, { phone })) {
+      return { success: false, error: 'A customer with this phone number already exists.' };
+    }
+
+    // Next legacy Sr No (kept for continuity with the migrated data).
     let maxSrNo = 0;
     for (let i = headerRow + 1; i < data.length; i++) {
       const sr = parseInt(getRowValue_(data[i], columns.legacySrNo), 10) || 0;
@@ -2124,6 +2149,8 @@ function addCustomer(name, dateStart, location, address, adminCredential) {
     setCustomerDetailValue_(row, columns.dateStart, dateStart ? new Date(dateStart) : now);
     setCustomerDetailValue_(row, columns.location, trim_(location));
     setCustomerDetailValue_(row, columns.address, trim_(address));
+    if (emailCol !== -1) setCustomerDetailValue_(row, emailCol, email);
+    if (phoneCol !== -1) setCustomerDetailValue_(row, phoneCol, phone);
     setCustomerDetailValue_(row, columns.accountStatus, 'Active');
     setCustomerDetailValue_(row, columns.activeReservationCount, 0);
     setCustomerDetailValue_(row, columns.subscriptionStatus, 'NA');

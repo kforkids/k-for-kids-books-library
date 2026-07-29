@@ -892,6 +892,14 @@
           <input type="date" id="cDate" class="form-control form-control-sm">
         </div>
         <div class="col-sm-6">
+          <label class="form-label">Email <span class="text-danger">*</span> <span class="text-muted">(used as username)</span></label>
+          <input type="email" id="cEmail" class="form-control form-control-sm" placeholder="you@example.com" autocomplete="off">
+        </div>
+        <div class="col-sm-6">
+          <label class="form-label">Phone <span class="text-danger">*</span></label>
+          <input type="tel" id="cPhone" class="form-control form-control-sm" placeholder="10-digit mobile" autocomplete="off">
+        </div>
+        <div class="col-sm-6">
           <label class="form-label">Location</label>
           <input type="text" id="cLocation" class="form-control form-control-sm" placeholder="e.g. Right Bhusari">
         </div>
@@ -1413,7 +1421,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
 
   // Restrict phone fields to digits-only as the user types.
-  ['registerPhone', 'claimPhone', 'rPhone'].forEach(attachPhoneInputGuard_);
+  ['registerPhone', 'claimPhone', 'rPhone', 'cPhone'].forEach(attachPhoneInputGuard_);
 });
 
 function loadBooks() {
@@ -3500,17 +3508,24 @@ function toggleAddForm() {
 function submitAddCustomer() {
   const name     = document.getElementById('cName').value.trim();
   const date     = document.getElementById('cDate').value;
+  const email    = document.getElementById('cEmail').value.trim();
+  const phone    = document.getElementById('cPhone').value.trim();
   const location = document.getElementById('cLocation').value.trim();
   const address  = document.getElementById('cAddress').value.trim();
 
   const err = firstError_([
     { ok: !!name,           msg: 'Customer name is required.' },
     { ok: name.length >= 2, msg: 'Please enter the customer\'s full name.' },
+    { ok: !!email,          msg: 'Email is required — it is used as the customer\'s username.' },
+    { ok: isValidEmail_(email), msg: 'Please enter a valid email address (e.g. you@example.com).' },
+    { ok: !!phone,          msg: 'Phone number is required.' },
+    { ok: isValidPhone_(phone), msg: 'Enter a valid 10-digit mobile number (digits only, starting 6–9).' },
     { ok: !date || date <= new Date().toISOString().slice(0, 10),
       msg: 'Start date can\'t be in the future.' }
   ]);
   if (err) { showToast(err, 'warning'); return; }
 
+  const normalizedPhone = normalizePhoneDigits_(phone);
   google.script.run
     .withSuccessHandler(res => {
       if (res.success) {
@@ -3521,7 +3536,7 @@ function submitAddCustomer() {
           showBanner(`New customer added. Customer ID: ${res.customerId} · Invite code: ${res.inviteCode} — share these so they can set up login.`, 'success', 0);
         }
         // Clear form and close
-        ['cName','cLocation','cAddress'].forEach(id => document.getElementById(id).value = '');
+        ['cName','cEmail','cPhone','cLocation','cAddress'].forEach(id => document.getElementById(id).value = '');
         toggleAddForm();
         loadCustomers();
       } else {
@@ -3529,7 +3544,7 @@ function submitAddCustomer() {
       }
     })
     .withFailureHandler(err => showToast('Something went wrong. Please try again.', 'danger'))
-    .addCustomer(name, date, location, address, adminToken);
+    .addCustomer(name, date, location, address, email, normalizedPhone, adminToken);
 }
 </script>
 </body>
