@@ -962,8 +962,8 @@
         <div id="loginPane">
           <form id="customerLoginForm" onsubmit="return false;" autocomplete="on">
             <div class="mb-3">
-              <label class="form-label" for="loginIdentifier">Email or Phone</label>
-              <input type="text" id="loginIdentifier" name="username" class="form-control" autocomplete="username" placeholder="Email address or phone number">
+              <label class="form-label" for="loginIdentifier">Email</label>
+              <input type="email" id="loginIdentifier" name="username" class="form-control" autocomplete="username" placeholder="you@example.com">
             </div>
             <div class="mb-2">
               <label class="form-label" for="loginPassword">Password</label>
@@ -994,7 +994,7 @@
             <input type="text" id="registerName" class="form-control" autocomplete="name" placeholder="Your full name">
           </div>
           <div class="mb-3">
-            <label class="form-label" for="registerEmail">Email <span class="text-danger">*</span> <span class="text-muted">(your login)</span></label>
+            <label class="form-label" for="registerEmail">Email <span class="text-danger">*</span> <span class="text-muted">(used as username)</span></label>
             <input type="email" id="registerEmail" class="form-control" autocomplete="email" placeholder="you@example.com">
           </div>
           <div class="mb-3">
@@ -1015,7 +1015,7 @@
         <!-- ── JOIN WITH INVITE CODE (revealed via the link above) ── -->
         <div id="claimPane" style="display:none">
           <div class="alert alert-info py-2 small">
-            Use the Customer ID and invite code shared by the admin, then add your email and phone and create a password. Your email is your login.
+            Use the Customer ID and invite code shared by the admin, then add your email and phone and create a password. Your email is used as your username.
           </div>
           <div class="mb-3">
             <label class="form-label">Customer ID</label>
@@ -1026,7 +1026,7 @@
             <input type="text" id="claimInviteCode" class="form-control" placeholder="KFK-XXXXX-XXXXX" autocomplete="one-time-code">
           </div>
           <div class="mb-3">
-            <label class="form-label">Email <span class="text-danger">*</span> <span class="text-muted">(your login)</span></label>
+            <label class="form-label">Email <span class="text-danger">*</span> <span class="text-muted">(used as username)</span></label>
             <input type="email" id="claimEmail" class="form-control" autocomplete="email" placeholder="you@example.com">
           </div>
           <div class="mb-3">
@@ -1328,6 +1328,52 @@ let pendingReserveBookNo = '';
 let approveCustomerId = ''; // customer currently being approved in the modal
 
 // ════════════════════════════════════════════════
+// Input validation (client-side)
+// ════════════════════════════════════════════════
+// These mirror the server-side checks so the user gets instant, friendly
+// feedback. The server still re-validates — client checks are UX, not security.
+
+// Basic email shape: something@something.tld. Deliberately permissive (real
+// deliverability isn't verifiable client-side) but rejects obvious garbage.
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+// Indian mobile: exactly 10 digits, first digit 6-9. We normalize first so a
+// user may type spaces, dashes, or a +91 / 0 prefix and still pass.
+function normalizePhoneDigits_(raw) {
+  let d = String(raw || '').replace(/\D/g, ''); // strip everything non-digit
+  if (d.length === 12 && d.startsWith('91')) d = d.slice(2); // +91XXXXXXXXXX
+  if (d.length === 11 && d.startsWith('0'))  d = d.slice(1); // 0XXXXXXXXXX
+  return d;
+}
+function isValidEmail_(email) { return EMAIL_RE.test(String(email || '').trim()); }
+function isValidPhone_(phone) {
+  const d = normalizePhoneDigits_(phone);
+  return /^[6-9]\d{9}$/.test(d);
+}
+
+// Validate a full field set and return the FIRST error message (or '' if OK).
+// `checks` is an array of { ok: boolean, msg: string } evaluated in order.
+function firstError_(checks) {
+  for (const c of checks) { if (!c.ok) return c.msg; }
+  return '';
+}
+
+// Restrict a phone <input> to digits-only as the user types (max 10 after
+// normalization). Non-destructive: keeps a leading + for +91 convenience.
+function attachPhoneInputGuard_(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.setAttribute('inputmode', 'numeric');
+  el.setAttribute('maxlength', '13'); // allows "+91" + 10 digits
+  el.addEventListener('input', () => {
+    // Allow only digits and an optional leading '+'
+    let v = el.value.replace(/[^\d+]/g, '');
+    v = v.replace(/(?!^)\+/g, ''); // '+' only at start
+    el.value = v;
+  });
+}
+
+// ════════════════════════════════════════════════
 // Init
 // ════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
@@ -1365,6 +1411,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Action-banner dismiss button (listener is more reliable than inline onclick).
   const bannerClose = document.getElementById('actionBannerClose');
   if (bannerClose) bannerClose.addEventListener('click', e => { e.stopPropagation(); hideBanner(); });
+
+  // Restrict phone fields to digits-only as the user types.
+  ['registerPhone', 'claimPhone', 'rPhone'].forEach(attachPhoneInputGuard_);
 });
 
 function loadBooks() {
@@ -2008,9 +2057,16 @@ function submitReservation() {
   const phone = document.getElementById('rPhone').value.trim();
   const notes = document.getElementById('rNotes').value.trim();
 
-  if (!name) { showToast('Please enter your name.', 'warning'); return; }
+  const err = firstError_([
+    { ok: !!name,           msg: 'Please enter your name.' },
+    { ok: name.length >= 2, msg: 'Please enter the full name.' },
+    { ok: !!phone,          msg: 'Phone number is required.' },
+    { ok: isValidPhone_(phone), msg: 'Enter a valid 10-digit mobile number (digits only, starting 6–9).' }
+  ]);
+  if (err) { showToast(err, 'warning'); return; }
   if (!activeBook) return;
 
+  const normalizedPhone = normalizePhoneDigits_(phone);
   setButtonLoading('reserveModal', true);
 
   google.script.run
@@ -2020,7 +2076,7 @@ function submitReservation() {
       if (res.success) {
         showToast(res.message, 'success');
         // Never store subscriber name in local state for non-admin sessions
-        refreshBook(activeBook.bookNo, 'Reserved', adminMode ? name : '', adminMode ? phone : '', adminMode ? notes : '', '', {
+        refreshBook(activeBook.bookNo, 'Reserved', adminMode ? name : '', adminMode ? normalizedPhone : '', adminMode ? notes : '', '', {
           reservationId: res.reservationId || '',
           reservedCustomerId: '',
           isMyReservation: false
@@ -2037,7 +2093,7 @@ function submitReservation() {
       setButtonLoading('reserveModal', false);
       showToast('Something went wrong. Please try again.', 'danger');
     })
-    .reserveBook(activeBook.bookNo, name, phone, notes);
+    .reserveBook(activeBook.bookNo, name, normalizedPhone, notes);
 }
 
 // Mirror of the server's parseMonthlyReservationLimit_: explicit limit first,
@@ -2664,7 +2720,15 @@ function doLogin() {
   const identifier = document.getElementById('loginIdentifier').value.trim();
   const password = document.getElementById('loginPassword').value;
   clearAuthError_();
-  if (!identifier || !password) { showAuthError_('Enter your email/phone (or admin username) and password.'); return; }
+  if (!identifier || !password) { showAuthError_('Enter your email and password.'); return; }
+  // The label says "Email", but this same form also logs in the admin (whose
+  // identifier is a username, not an email). So only validate email SHAPE when
+  // the value looks like an email attempt (contains '@') — never block a
+  // non-email admin username. The server makes the final call.
+  if (identifier.includes('@') && !isValidEmail_(identifier)) {
+    showAuthError_('That email address doesn\'t look valid.');
+    return;
+  }
 
   setButtonLoading('customerAuthModal', true);
   google.script.run
@@ -2700,11 +2764,19 @@ function claimExistingCustomer() {
   const password = document.getElementById('claimPassword').value;
 
   clearAuthError_();
-  if (!customerId || !inviteCode || !email || !phone || !password) {
-    showAuthError_('Customer ID, invite code, email, phone, and password are all required.');
-    return;
-  }
+  const err = firstError_([
+    { ok: !!customerId,        msg: 'Customer ID is required.' },
+    { ok: !!inviteCode,        msg: 'Invite code is required.' },
+    { ok: !!email,             msg: 'Email is required — it will be your login.' },
+    { ok: isValidEmail_(email),msg: 'Please enter a valid email address (e.g. you@example.com).' },
+    { ok: !!phone,             msg: 'Phone number is required.' },
+    { ok: isValidPhone_(phone),msg: 'Enter a valid 10-digit mobile number (digits only, starting 6–9).' },
+    { ok: !!password,          msg: 'Please create a password.' },
+    { ok: password.length >= 8,msg: 'Password must be at least 8 characters.' }
+  ]);
+  if (err) { showAuthError_(err); return; }
 
+  const normalizedPhone = normalizePhoneDigits_(phone);
   setButtonLoading('customerAuthModal', true);
   google.script.run
     .withSuccessHandler(res => handleCustomerAuthResponse(res))
@@ -2712,7 +2784,7 @@ function claimExistingCustomer() {
       setButtonLoading('customerAuthModal', false);
       showAuthError_('Something went wrong. Please try again.');
     })
-    .claimExistingCustomer(customerId, inviteCode, email, password, phone);
+    .claimExistingCustomer(customerId, inviteCode, email, password, normalizedPhone);
 }
 
 // Self-signup: a brand-new subscriber creates an account (pending approval).
@@ -2723,11 +2795,19 @@ function selfSignupCustomer() {
   const password = document.getElementById('registerPassword').value;
 
   clearAuthError_();
-  if (!name) { showAuthError_('Please enter your name.'); return; }
-  if (!email) { showAuthError_('Email is required — it will be your login.'); return; }
-  if (!phone) { showAuthError_('Phone number is required.'); return; }
-  if (!password || password.length < 8) { showAuthError_('Password must be at least 8 characters.'); return; }
+  const err = firstError_([
+    { ok: !!name,              msg: 'Please enter your name.' },
+    { ok: name.length >= 2,    msg: 'Please enter your full name.' },
+    { ok: !!email,             msg: 'Email is required — it will be your login.' },
+    { ok: isValidEmail_(email),msg: 'Please enter a valid email address (e.g. you@example.com).' },
+    { ok: !!phone,             msg: 'Phone number is required.' },
+    { ok: isValidPhone_(phone),msg: 'Enter a valid 10-digit mobile number (digits only, starting 6–9).' },
+    { ok: !!password,          msg: 'Please create a password.' },
+    { ok: password.length >= 8,msg: 'Password must be at least 8 characters.' }
+  ]);
+  if (err) { showAuthError_(err); return; }
 
+  const normalizedPhone = normalizePhoneDigits_(phone);
   setButtonLoading('customerAuthModal', true);
   google.script.run
     .withSuccessHandler(res => handleCustomerAuthResponse(res))
@@ -2735,7 +2815,7 @@ function selfSignupCustomer() {
       setButtonLoading('customerAuthModal', false);
       showAuthError_('Something went wrong. Please try again.');
     })
-    .selfSignupCustomer(name, email, phone, password);
+    .selfSignupCustomer(name, email, normalizedPhone, password);
 }
 
 function handleCustomerAuthResponse(res) {
@@ -2804,6 +2884,7 @@ function sendResetCode() {
   const email = document.getElementById('resetEmail').value.trim();
   clearResetMessage_();
   if (!email) { showResetMessage_('Enter your email first.', 'danger'); return; }
+  if (!isValidEmail_(email)) { showResetMessage_('Please enter a valid email address.', 'danger'); return; }
   const btn = document.getElementById('resetSendBtn');
   setInlineButtonLoading(btn, true, 'Sending…');
   google.script.run
@@ -2830,7 +2911,9 @@ function submitResetPassword() {
   const newPassword = document.getElementById('resetNewPassword').value;
   clearResetMessage_();
   if (!email) { showResetMessage_('Enter your email.', 'danger'); return; }
+  if (!isValidEmail_(email)) { showResetMessage_('Please enter a valid email address.', 'danger'); return; }
   if (!code) { showResetMessage_('Enter the reset code.', 'danger'); return; }
+  if (!/^[A-Za-z0-9-]{4,}$/.test(code)) { showResetMessage_('That reset code doesn\'t look right — check for typos.', 'danger'); return; }
   if (!newPassword || newPassword.length < 8) { showResetMessage_('New password must be at least 8 characters.', 'danger'); return; }
 
   setButtonLoading('resetModal', true);
@@ -3420,7 +3503,13 @@ function submitAddCustomer() {
   const location = document.getElementById('cLocation').value.trim();
   const address  = document.getElementById('cAddress').value.trim();
 
-  if (!name) { showToast('Customer name is required.', 'warning'); return; }
+  const err = firstError_([
+    { ok: !!name,           msg: 'Customer name is required.' },
+    { ok: name.length >= 2, msg: 'Please enter the customer\'s full name.' },
+    { ok: !date || date <= new Date().toISOString().slice(0, 10),
+      msg: 'Start date can\'t be in the future.' }
+  ]);
+  if (err) { showToast(err, 'warning'); return; }
 
   google.script.run
     .withSuccessHandler(res => {

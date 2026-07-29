@@ -24,7 +24,27 @@ const CONFIG = {
 
   // Customer DB sheet name
   CUSTOMER_SHEET_NAME: 'Customer DB',
-  CUSTOMER_DETAILS_SHEET_NAME: 'Customer-Details'
+  CUSTOMER_DETAILS_SHEET_NAME: 'Customer-Details',
+
+  // Append-only history of every book lifecycle event (reserve/unreserve/
+  // issue/return/cancel). One immutable row per event; never edited in place.
+  ACTIVITY_LOG_SHEET_NAME: 'Activity-Log'
+};
+
+// Activity-Log headers (col order matters — logActivity_ appends in this order).
+const ACTIVITY_LOG_HEADERS = [
+  'Timestamp', 'Event', 'Book No', 'Book Name',
+  'Customer ID', 'Customer Name', 'Actor',
+  'Due Date', 'Reservation ID', 'Notes'
+];
+
+// Event enum for the Activity-Log 'Event' column.
+const ACTIVITY_EVENT = {
+  RESERVED:              'RESERVED',
+  UNRESERVED:            'UNRESERVED',
+  RESERVATION_CANCELLED: 'RESERVATION_CANCELLED',
+  ISSUED:                'ISSUED',
+  RETURNED:              'RETURNED'
 };
 
 // Header names in the book source sheet. Code resolves these to column positions
@@ -661,6 +681,14 @@ function setupCustomerReservationSystem(adminCredential, options) {
       CUSTOMER_DETAILS_HEADERS,
       summary
     );
+    // Append-only activity log (history of reservations, issues, returns).
+    ensureSheetWithHeaders_(
+      targetSs,
+      CONFIG.ACTIVITY_LOG_SHEET_NAME,
+      ACTIVITY_LOG_HEADERS,
+      summary
+    );
+
     const customerSetup = migrateLegacyCustomers_(legacySs, customerDetails.sheet, customerDetails.headerRow, now);
     summary.copiedCustomers = customerSetup.copiedCustomers;
     summary.updatedCustomers = customerSetup.updatedCustomers;
@@ -963,6 +991,7 @@ function reserveBook(bookNo, subscriberName, phone, notes) {
       const now = new Date();
       const reservationId = createReservationId_();
 
+      const bookName = trim_(bookRow[columns.BOOK_NAME]);
       bookRow[columns.STATUS] = 'Reserved';
       bookRow[linkColumns.reservationId] = reservationId;
       bookRow[linkColumns.reservedCustomerId] = '';
@@ -970,6 +999,12 @@ function reserveBook(bookNo, subscriberName, phone, notes) {
       bookRow[linkColumns.reservedAt] = now;
       bookRow[linkColumns.reservationUpdatedAt] = now;
       setSheetRowValues_(sheet, bookRowNumber, bookRow);
+
+      const contactNotes = [phone ? 'phone: ' + trim_(phone) : '', trim_(notes)]
+        .filter(Boolean).join(' | ');
+      logActivity_(ACTIVITY_EVENT.RESERVED, bookNo, bookName, '', subscriberName, 'admin', {
+        reservationId, notes: contactNotes
+      });
 
       invalidatePublicBooksCache_();
       return { success: true, message: '✅ Book reserved! We will contact you when it\'s ready.', reservationId };
@@ -1099,6 +1134,9 @@ function reserveBookForCustomer(bookNo, customerToken) {
         reservationId, bookNo: normalizedBookNo, bookName
       });
       __lap('sessionUpdated');
+
+      logActivity_(ACTIVITY_EVENT.RESERVED, normalizedBookNo, bookName,
+        customer.customerId, customer.name, 'customer', { reservationId });
 
       invalidatePublicBooksCache_();
       __lap('cacheInvalidated_DONE');
@@ -1237,6 +1275,7 @@ function unreserveMyBook(reservationId, customerToken, bookNo) {
       }
 
       const normalizedBookNo = trim_(row[columns.BOOK_NO]);
+      const bookName = trim_(row[columns.BOOK_NAME]);
       row[columns.STATUS] = 'Available';
       row[linkColumns.reservationId] = '';
       row[linkColumns.reservedCustomerId] = '';
@@ -1245,6 +1284,9 @@ function unreserveMyBook(reservationId, customerToken, bookNo) {
       row[linkColumns.reservationUpdatedAt] = now;
       setSheetRowValues_(sheet, bookRowNumber, row);
       __lap('rowWritten');
+
+      logActivity_(ACTIVITY_EVENT.UNRESERVED, normalizedBookNo, bookName,
+        sessionCustomer.customerId, sessionCustomer.name, 'customer', { reservationId });
 
       // Option A: update the session reservation index only. No Customer-Details
       // write on the hot path (see reserveBookForCustomer for the rationale).
@@ -1307,8 +1349,9 @@ function issueBook(bookNo, customerId, customerName, adminCredential) {
       try { adjustCustomerActiveReservationCountById_(priorReserverId, -1); } catch (e) { /* non-fatal */ }
     }
 
-    // Log to customer's named tab
-    logIssueToCustTab_(customerName, bookNo, bookName, now);
+    logActivity_(ACTIVITY_EVENT.ISSUED, bookNo, bookName, customerId, customerName, 'admin', {
+      dueDate: formatDate_(dueDate, Session.getScriptTimeZone())
+    });
 
     invalidatePublicBooksCache_();
     return {
@@ -1332,7 +1375,11 @@ function returnBook(bookNo, adminCredential) {
 
     const row = getSheetRowValues_(sheet, bookRowNumber);
     const issuedTo = trim_(row[columns.ISSUED_TO]);
+    const bookName = trim_(row[columns.BOOK_NAME]);
     const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
+    // The customer the book was ISSUED to (issue-tracking column), not the
+    // reservation owner — that's who the RETURNED event belongs to.
+    const issuedCustomerId = issueColumns.issuedCustomerId === -1 ? '' : trim_(row[issueColumns.issuedCustomerId]);
 
     // Clear issue (incl. the issue-tracking columns) AND any lingering
     // reservation link so an available row never carries stale fields.
@@ -1352,9 +1399,8 @@ function returnBook(bookNo, adminCredential) {
       try { adjustCustomerActiveReservationCountById_(ownerCustomerId, -1); } catch (e) { /* non-fatal */ }
     }
 
-    // Log return to customer's named tab
     if (issuedTo) {
-      logReturnToCustTab_(issuedTo, bookNo.trim(), new Date());
+      logActivity_(ACTIVITY_EVENT.RETURNED, bookNo, bookName, issuedCustomerId, issuedTo, 'admin');
     }
 
     invalidatePublicBooksCache_();
@@ -1376,6 +1422,9 @@ function cancelReservation(bookNo, adminCredential) {
     const row = getSheetRowValues_(sheet, bookRowNumber);
     // Remember whose reservation this was, so we can decrement their count.
     const ownerCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(row[linkColumns.reservedCustomerId]);
+    const ownerCustomerName = linkColumns.reservedCustomerName === -1 ? '' : trim_(row[linkColumns.reservedCustomerName]);
+    const cancelledReservationId = linkColumns.reservationId === -1 ? '' : trim_(row[linkColumns.reservationId]);
+    const bookName = trim_(row[columns.BOOK_NAME]);
 
     // Set Available AND clear the whole reservation link — never leave stale
     // reservation fields on an available row (that's what caused the "reserved
@@ -1392,6 +1441,9 @@ function cancelReservation(bookNo, adminCredential) {
     if (ownerCustomerId) {
       try { adjustCustomerActiveReservationCountById_(ownerCustomerId, -1); } catch (e) { /* non-fatal */ }
     }
+
+    logActivity_(ACTIVITY_EVENT.RESERVATION_CANCELLED, bookNo, bookName,
+      ownerCustomerId, ownerCustomerName, 'admin', { reservationId: cancelledReservationId });
 
     invalidatePublicBooksCache_();
     return { success: true, message: '✅ Reservation cancelled.' };
@@ -2167,69 +2219,49 @@ function updateCustomerStatus(customerName, newStatus, adminCredential) {
  * Finds the customer's named sheet tab.
  * Tries exact match, then case-insensitive, then partial.
  */
-function findCustomerSheet_(customerName) {
-  const ss     = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
-  const sheets = ss.getSheets();
-  const name   = customerName.trim().toLowerCase();
-
-  // Exact match (case-insensitive)
-  for (const s of sheets) {
-    if (s.getName().toLowerCase() === name) return s;
-  }
-  // Partial match
-  for (const s of sheets) {
-    const sName = s.getName().toLowerCase();
-    if (sName.includes(name) || name.includes(sName)) return s;
-  }
-  return null;
-}
-
 /**
- * Appends an issue record to the customer's named tab.
- * Tab structure: Row1=location, Row2=headers, Row3+=data
- * Columns: A=empty, B=BookNo, C=BookName, D=IssuedDate, E=ReturnDate, F=Status
+ * Appends one immutable row to the Activity-Log sheet. Append-only: a return is
+ * a new RETURNED row, never an edit to the ISSUED row.
+ *
+ * Best-effort by design — a logging failure (missing sheet, transient error)
+ * must NEVER break the caller's main action, so everything is wrapped and
+ * swallowed. Column order matches ACTIVITY_LOG_HEADERS.
+ *
+ * @param {string} event       One of ACTIVITY_EVENT.*
+ * @param {string} bookNo      Book number (join key to Books-DB)
+ * @param {string} bookName    Denormalized snapshot (survives book renames)
+ * @param {string} customerId  '' for anonymous / walk-in reservations
+ * @param {string} customerName Denormalized snapshot
+ * @param {string} actor       'admin' | 'customer'
+ * @param {Object} [extra]     { dueDate?, reservationId?, notes? }
  */
-function logIssueToCustTab_(customerName, bookNo, bookName, issueDate) {
+function logActivity_(event, bookNo, bookName, customerId, customerName, actor, extra) {
   try {
-    const custSheet = findCustomerSheet_(customerName);
-    if (!custSheet) {
-      Logger.log('Customer tab not found for: ' + customerName);
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID)
+      .getSheetByName(CONFIG.ACTIVITY_LOG_SHEET_NAME);
+    if (!sheet) {
+      // Setup not run yet — skip silently rather than throw on the hot path.
+      Logger.log('logActivity_: Activity-Log sheet missing; skipping ' + event);
       return;
     }
-    const date = (issueDate instanceof Date) ? issueDate : (issueDate ? new Date(issueDate) : new Date());
-    custSheet.appendRow(['', bookNo, bookName, date, '', 'Issued']);
+    extra = extra || {};
+    // Format the timestamp explicitly in IST so the log reads the same
+    // regardless of the spreadsheet's or script project's timezone setting.
+    const timestamp = Utilities.formatDate(new Date(), 'Asia/Kolkata', 'dd/MM/yyyy HH:mm:ss');
+    sheet.appendRow([
+      timestamp,
+      event,
+      trim_(bookNo),
+      bookName || '',
+      customerId || '',
+      customerName || '',
+      actor || '',
+      extra.dueDate || '',
+      extra.reservationId || '',
+      extra.notes || ''
+    ]);
   } catch (e) {
-    Logger.log('logIssueToCustTab_ error: ' + e.message);
-  }
-}
-
-/**
- * Updates the return date and status in the customer's tab for a given book.
- * Searches from the bottom up to find the last 'Issued' entry for the book.
- */
-function logReturnToCustTab_(customerName, bookNo, returnDate) {
-  try {
-    const custSheet = findCustomerSheet_(customerName);
-    if (!custSheet) {
-      Logger.log('Customer tab not found for: ' + customerName);
-      return;
-    }
-    const data = custSheet.getDataRange().getValues();
-    const date = (returnDate instanceof Date) ? returnDate : (returnDate ? new Date(returnDate) : new Date());
-
-    // Columns B=index 1 (BookNo), E=index 4 (ReturnDate), F=index 5 (Status)
-    for (let i = data.length - 1; i >= 0; i--) {
-      const rowBookNo = trim_(data[i][1]);
-      const rowStatus = trim_(data[i][5]);
-      if (rowBookNo === bookNo && (rowStatus === 'Issued' || rowStatus === '')) {
-        custSheet.getRange(i + 1, 5).setValue(date);       // Col E: Return Date
-        custSheet.getRange(i + 1, 6).setValue('Returned'); // Col F: Status
-        return;
-      }
-    }
-    Logger.log('No open issued record for book ' + bookNo + ' in tab for ' + customerName);
-  } catch (e) {
-    Logger.log('logReturnToCustTab_ error: ' + e.message);
+    Logger.log('logActivity_ error: ' + e.message);
   }
 }
 
