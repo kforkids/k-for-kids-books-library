@@ -1183,6 +1183,114 @@ function getMyReservations(customerToken) {
   }
 }
 
+// ── Reading history (books issued-and-returned to the logged-in customer) ─────
+// Sourced from the append-only Activity-Log. A book counts as "read" only when
+// it has BOTH an ISSUED and a later RETURNED event for this customer. To keep
+// this off the hot path as the log grows, the result is cached per customer
+// (long TTL). Past history is immutable, so the only invalidation needed is a
+// single-customer refresh when THEY return another book (see returnBook).
+function readBooksCacheKey_(customerId) {
+  return 'READ_BOOKS_' + String(customerId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80);
+}
+
+function invalidateReadBooksCache_(customerId) {
+  if (!customerId) return;
+  try { CacheService.getScriptCache().remove(readBooksCacheKey_(customerId)); } catch (e) { /* non-fatal */ }
+}
+
+function getMyReadBooks(customerToken) {
+  try {
+    const sessionCustomer = verifyCustomerSession_(customerToken);
+    if (!sessionCustomer) return { success: false, error: 'Please log in first.' };
+    const customerId = sessionCustomer.customerId;
+
+    const cache = CacheService.getScriptCache();
+    const cacheKey = readBooksCacheKey_(customerId);
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      try { return JSON.parse(cached); } catch (e) { /* fall through to recompute */ }
+    }
+
+    const result = computeReadBooksForCustomer_(customerId);
+    try { cache.put(cacheKey, JSON.stringify(result), CUSTOMER_SESSION_SECS); } catch (e) { /* cache best-effort */ }
+    return result;
+  } catch (err) {
+    return reportError_('getMyReadBooks', err);
+  }
+}
+
+// One authoritative scan of Activity-Log for a customer's completed loans.
+// Returns { success, readBookNos:[...], history:[{bookNo,bookName,borrowedAt,
+// returnedAt}] } with history newest-first (by return time).
+function computeReadBooksForCustomer_(customerId) {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const sheet = ss.getSheetByName(CONFIG.ACTIVITY_LOG_SHEET_NAME);
+  if (!sheet || sheet.getLastRow() < 2) {
+    return { success: true, readBookNos: [], history: [] };
+  }
+
+  const values = sheet.getDataRange().getValues();
+  const headerMap = getHeaderMap_(values[0]);
+  const cTime   = getHeaderIndex_(headerMap, 'Timestamp');
+  const cEvent  = getHeaderIndex_(headerMap, 'Event');
+  const cBookNo = getHeaderIndex_(headerMap, 'Book No');
+  const cBookNm = getHeaderIndex_(headerMap, 'Book Name');
+  const cCustId = getHeaderIndex_(headerMap, 'Customer ID');
+
+  // Track, per book, the latest ISSUED time and the latest RETURNED time.
+  const issuedAt = {};   // bookNo -> { ts, sort, bookName }
+  const returnedAt = {}; // bookNo -> { ts, sort }
+
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    if (trim_(row[cCustId]) !== customerId) continue;
+    const bookNo = trim_(row[cBookNo]);
+    if (!bookNo) continue;
+    const event = trim_(row[cEvent]);
+    const tsStr = trim_(row[cTime]);
+    const sort = activityTimeSortKey_(tsStr);
+    if (event === ACTIVITY_EVENT.ISSUED) {
+      if (!issuedAt[bookNo] || sort >= issuedAt[bookNo].sort) {
+        issuedAt[bookNo] = { ts: tsStr, sort, bookName: trim_(row[cBookNm]) };
+      }
+    } else if (event === ACTIVITY_EVENT.RETURNED) {
+      if (!returnedAt[bookNo] || sort >= returnedAt[bookNo].sort) {
+        returnedAt[bookNo] = { ts: tsStr, sort };
+      }
+    }
+  }
+
+  // "Read" = has BOTH an issue and a return (a completed loan).
+  const history = [];
+  Object.keys(returnedAt).forEach(bookNo => {
+    const iss = issuedAt[bookNo];
+    const ret = returnedAt[bookNo];
+    if (!iss) return; // returned without a matching issue in the log — skip
+    history.push({
+      bookNo,
+      bookName: iss.bookName || '',
+      borrowedAt: iss.ts,
+      returnedAt: ret.ts,
+      sort: ret.sort
+    });
+  });
+
+  history.sort((a, b) => b.sort - a.sort); // newest return first
+  const readBookNos = history.map(h => h.bookNo);
+  history.forEach(h => { delete h.sort; }); // don't leak the sort key to the client
+  return { success: true, readBookNos, history };
+}
+
+// Parse the Activity-Log 'dd/MM/yyyy HH:mm:ss' IST string into a sortable
+// number. Returns 0 for anything unparseable so it sorts oldest.
+function activityTimeSortKey_(s) {
+  const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (!m) return 0;
+  const yyyy = Number(m[3]), mm = Number(m[2]) - 1, dd = Number(m[1]);
+  const hh = Number(m[4] || 0), mi = Number(m[5] || 0), ss = Number(m[6] || 0);
+  return new Date(yyyy, mm, dd, hh, mi, ss).getTime() || 0;
+}
+
 function debugMyReservationForBook(bookNo, customerToken) {
   try {
     const customer = verifyCustomerSession_(customerToken);
@@ -1401,6 +1509,9 @@ function returnBook(bookNo, adminCredential) {
 
     if (issuedTo) {
       logActivity_(ACTIVITY_EVENT.RETURNED, bookNo, bookName, issuedCustomerId, issuedTo, 'admin');
+      // This completes a loan → the borrower's reading history changed. Drop
+      // their cached read-books so the next fetch reflects the new return.
+      invalidateReadBooksCache_(issuedCustomerId);
     }
 
     invalidatePublicBooksCache_();

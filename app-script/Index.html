@@ -213,6 +213,22 @@
   }
   .book-card.is-hidden-admin { outline: 2px dashed #9e9e9e; outline-offset: -2px; }
 
+  /* Customer "Read before" marker — bottom-left so it clears the status badge
+     (top-right) and the admin hidden badge (top-left). */
+  .read-badge {
+    position: absolute;
+    bottom: 7px; left: 7px;
+    display: inline-flex;
+    align-items: center;
+    font-size: .62rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #185fa5;
+    color: #fff;
+    letter-spacing: .02em;
+  }
+
   /* ── Optimistic "saving…" overlay on a card ── */
   .card-saving {
     position: absolute;
@@ -825,6 +841,9 @@
   <a href="#" class="stat-customer stat-link" id="statMyIssuedLink" style="display:none"
      onclick="toggleMineFilter('issued'); return false;">
     <i class="bi bi-person-check" style="color:#e53935"></i> <b id="statMyIssued">0</b> issued to me</a>
+  <a href="#" class="stat-customer stat-link" id="statMyReadLink" style="display:none"
+     onclick="toggleMineFilter('read'); return false;">
+    <i class="bi bi-book" style="color:#185fa5"></i> <b id="statMyRead">0</b> read before</a>
 </div>
 
 <!-- ══════════════ MAIN CONTENT ══════════════ -->
@@ -855,6 +874,16 @@
   <div class="books-grid" id="booksGrid"></div>
   <div id="scrollSentinel" style="display:none" class="text-center py-4">
     <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
+  </div>
+
+  <!-- Customer-only: a strip of the books they've most recently returned. Shown
+       below the main grid in the default (unfiltered) view. Populated by JS. -->
+  <div id="recentlyReadSection" style="display:none" class="mt-4">
+    <div class="d-flex align-items-center justify-content-between mb-2">
+      <h6 class="mb-0 fw-bold"><i class="bi bi-book me-1" style="color:#185fa5"></i>Recently read by you</h6>
+      <a href="#" class="small" onclick="toggleMineFilter('read'); return false;">See all</a>
+    </div>
+    <div class="books-grid" id="recentlyReadGrid"></div>
   </div>
 
   <!-- Anonymous preview CTA: shown only to non-logged-in visitors when the
@@ -1320,6 +1349,11 @@ let searchTimer  = null;
 // `mine`: '' (all) | 'reserved' | 'issued' — filters to the logged-in customer's
 // own reserved / issued books, toggled from the stats strip links.
 let filters      = { language: '', ageGroup: '', status: '', search: '', withImage: false, noImage: false, mine: '' };
+// Reading history for the logged-in customer, from Activity-Log (completed
+// loans only). myReadBooks is a Set of book numbers for O(1) card lookups;
+// myReadHistory is the dated list (newest first) for the panel + recently-read.
+let myReadBooks = new Set();
+let myReadHistory = [];
 // PERF: cache the logged-in customer's active reservations for the session so
 // opening a reserved book's detail modal doesn't fire a full-sheet server scan
 // (getMyReservations) every single time. Invalidated on reserve/unreserve.
@@ -1476,6 +1510,7 @@ function applyFilters() {
   filtered = allBooks.filter(b => {
     if (filters.mine === 'reserved' && !(b.status === 'Reserved' && b.isMyReservation)) return false;
     if (filters.mine === 'issued'   && !b.isMyIssue) return false;
+    if (filters.mine === 'read'     && !myReadBooks.has(String(b.bookNo))) return false;
     if (lg && b.language.toLowerCase() !== lg) return false;
     if (ag && ageGroupFilterValue(b.ageGroup) !== ag) return false;
     if (st && b.status.toLowerCase()   !== st) return false;
@@ -1608,6 +1643,10 @@ function bookCardHtml(book) {
   const hiddenBadge = (adminMode && book.hidden)
     ? `<span class="hidden-badge"><i class="bi bi-eye-slash me-1"></i>Hidden</span>`
     : '';
+  // "Read before" badge: books this logged-in customer has completed a loan on.
+  const readBadge = (!adminMode && currentCustomer && myReadBooks.has(String(book.bookNo)))
+    ? `<span class="read-badge"><i class="bi bi-check2 me-1"></i>Read before</span>`
+    : '';
 
   // Hover overlay: the full details (author, category, language, age) revealed on
   // hover / focus only. Language and age each get their own line; the book code
@@ -1630,6 +1669,7 @@ function bookCardHtml(book) {
       ${imgHtml}${placeholder}
       ${canSeeBookStatus() ? `<span class="status-badge badge-${sc}">${escHtml(book.status)}</span>` : ''}
       ${hiddenBadge}
+      ${readBadge}
       ${hoverOverlay}
       ${savingOverlay}
     </div>
@@ -1701,6 +1741,38 @@ function renderGrid() {
   empty.style.display = 'none';
   appendBooks();
   renderPreviewCta();
+  renderRecentlyRead();
+}
+
+// Below the grid: up to 6 books the customer most recently returned. Shown only
+// in the default view (no active mine/status/search/etc. filter) so it doesn't
+// clutter a filtered result. Cards reuse the loaded book objects when present.
+const RECENTLY_READ_COUNT = 6;
+function renderRecentlyRead() {
+  const section = document.getElementById('recentlyReadSection');
+  const grid = document.getElementById('recentlyReadGrid');
+  if (!section || !grid) return;
+
+  const noFilterActive = !filters.mine && !filters.status && !filters.search &&
+    !filters.language && !filters.ageGroup && !filters.withImage && !filters.noImage;
+  const show = !adminMode && currentCustomer && myReadHistory.length > 0 && noFilterActive;
+  if (!show) { section.style.display = 'none'; grid.innerHTML = ''; return; }
+
+  const cards = myReadHistory.slice(0, RECENTLY_READ_COUNT).map(h => {
+    const loaded = allBooks.find(b => String(b.bookNo) === String(h.bookNo));
+    if (loaded) return bookCardHtml(loaded);
+    // Fallback minimal card if the book isn't in the currently loaded list.
+    return `<div class="book-card">
+        <div class="book-img-wrap">
+          <div class="book-img-placeholder"><i class="bi bi-book"></i><small>${escHtml(h.bookNo)}</small></div>
+          <span class="read-badge"><i class="bi bi-check2 me-1"></i>Read before</span>
+        </div>
+        <div class="book-info"><div class="book-title">${escHtml(h.bookName || 'Book ' + h.bookNo)}</div></div>
+      </div>`;
+  }).join('');
+
+  grid.innerHTML = cards;
+  section.style.display = '';
 }
 
 // Show the "log in / register to see all books" call-to-action to anonymous
@@ -1767,11 +1839,18 @@ function updateStats() {
     const myIssued   = allBooks.filter(b => b.isMyIssue).length; // populated in Part 2
     document.getElementById('statMyReserved').textContent = myReserved;
     document.getElementById('statMyIssued').textContent   = myIssued;
+    document.getElementById('statMyRead').textContent     = myReadBooks.size;
     // Reflect which "mine" filter is currently active on the links.
     const resLink = document.getElementById('statMyReservedLink');
     const issLink = document.getElementById('statMyIssuedLink');
+    const readLink = document.getElementById('statMyReadLink');
     if (resLink) resLink.classList.toggle('active', filters.mine === 'reserved');
     if (issLink) issLink.classList.toggle('active', filters.mine === 'issued');
+    // Only surface "read before" once there's history to show.
+    if (readLink) {
+      readLink.style.display = myReadBooks.size > 0 ? '' : 'none';
+      readLink.classList.toggle('active', filters.mine === 'read');
+    }
   }
 }
 
@@ -1856,8 +1935,21 @@ function openBookDetail(bookNo) {
     }
   }
 
+  // "Read before" note for logged-in customers, using the completed-loan dates.
+  let readInfo = '';
+  if (!adminMode && currentCustomer && myReadBooks.has(String(book.bookNo))) {
+    const h = myReadHistory.find(x => String(x.bookNo) === String(book.bookNo));
+    const dates = h
+      ? `<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Borrowed <b>${escHtml(readDatePart_(h.borrowedAt))}</b> · Returned <b>${escHtml(readDatePart_(h.returnedAt))}</b></div>`
+      : '';
+    readInfo = `<div class="alert alert-info py-2 px-3 mt-2 mb-0" style="font-size:.82rem">
+         <div><i class="bi bi-check2-circle me-1"></i><b>You've read this book before.</b></div>
+         ${dates}
+       </div>`;
+  }
+
   document.getElementById('modalBody').innerHTML = `
-    <div id="reservationInfoBox" class="reservation-info-top">${reservationInfo}</div>
+    <div id="reservationInfoBox" class="reservation-info-top">${reservationInfo}${readInfo}</div>
     <div class="book-detail-head">
       ${imgPart}
       <div class="book-detail-meta">
@@ -2671,6 +2763,7 @@ function restoreCustomerSession() {
       if (res && res.success && res.customer) {
         currentCustomer = res.customer;
         renderCustomerState();
+        loadMyReadBooks();
       } else {
         clearCustomerSession();
       }
@@ -2868,6 +2961,7 @@ function handleCustomerAuthResponse(res) {
     customerAuthModal.hide();
     renderCustomerState();
     loadBooks();
+    loadMyReadBooks();
     showToast(res.message || 'Logged in.', 'success');
     if (pendingReserveBookNo && isCustomerActive()) {
       const bookNo = pendingReserveBookNo;
@@ -2990,8 +3084,35 @@ function clearCustomerSession() {
   customerToken = '';
   currentCustomer = null;
   myReservationsCache = null; // PERF: don't carry one customer's reservations to another session
+  myReadBooks = new Set();    // don't carry reading history across sessions
+  myReadHistory = [];
   localStorage.removeItem('kfkCustomerToken');
   renderCustomerState();
+}
+
+// The Activity-Log timestamp is "dd/MM/yyyy HH:mm:ss" (IST). For display we
+// usually want just the date part.
+function readDatePart_(ts) {
+  return String(ts || '').split(' ')[0] || String(ts || '');
+}
+
+// Fetch the logged-in customer's completed-loan history (server-cached per
+// customer). Populates myReadBooks/myReadHistory, then re-renders so the
+// "read before" badge, count, and recently-read section reflect it. Best-effort:
+// a failure just leaves the history empty — it never blocks book browsing.
+function loadMyReadBooks() {
+  if (!customerToken || !currentCustomer) return;
+  google.script.run
+    .withSuccessHandler(res => {
+      if (res && res.success) {
+        myReadBooks = new Set((res.readBookNos || []).map(String));
+        myReadHistory = res.history || [];
+        updateStats();
+        if (allBooks.length) renderGrid();
+      }
+    })
+    .withFailureHandler(() => { /* non-fatal — leave history empty */ })
+    .getMyReadBooks(customerToken);
 }
 
 function renderCustomerState() {
