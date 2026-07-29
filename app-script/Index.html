@@ -2679,7 +2679,12 @@ function buildAdminConfirmBody_(book, action) {
       `<div class="mt-2 text-muted" style="font-size:.8rem">This frees the book and removes it from their reservations.</div>`;
   } else {
     const who = book.issuedTo ? `<div><i class="bi bi-person-fill me-1"></i>Issued to <b>${escHtml(book.issuedTo)}</b></div>` : '';
-    detailRows = who +
+    const issuedOn = book.issuedAt
+      ? `<div class="mt-1"><i class="bi bi-calendar-event me-1"></i>Issued on <b>${escHtml(book.issuedAt)}</b></div>` : '';
+    const overdueTag = book.overdue ? ` <span class="badge bg-danger ms-1">Overdue</span>` : '';
+    const dueOn = book.dueDate
+      ? `<div class="mt-1"><i class="bi bi-calendar-check me-1"></i>Due <b>${escHtml(book.dueDate)}</b>${overdueTag}</div>` : '';
+    detailRows = who + issuedOn + dueOn +
       `<div class="mt-2 text-muted" style="font-size:.8rem">This marks the book returned and makes it available again.</div>`;
   }
 
