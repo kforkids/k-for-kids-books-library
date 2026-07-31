@@ -2335,6 +2335,41 @@ function approveCustomer(customerId, subscriptionPlan, monthlyLimit, adminCreden
   }
 }
 
+/**
+ * Update an existing customer's subscription plan + monthly reservation limit.
+ * Unlike approveCustomer, this does NOT change the account status — it's for
+ * adjusting the plan of an already-onboarded customer (any status). The cached
+ * session picks up the new limit lazily via the sheet re-check in
+ * reserveBookForCustomer (no forced re-login needed).
+ */
+function updateSubscriptionPlan(customerId, subscriptionPlan, monthlyLimit, adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
+    customerId = trim_(customerId);
+    if (!customerId) return { success: false, error: 'Customer ID is required.' };
+
+    const limit = parseInt(monthlyLimit, 10);
+    if (!(limit > 0)) return { success: false, error: 'Please choose a positive monthly reservation limit.' };
+
+    const details = getCustomerDetailsSheetAndColumns_();
+    const columns = details.columns;
+    const rowNumber = findDataRowByExactValue_(details.sheet, details.headerRow, columns.customerId, customerId);
+    if (!rowNumber) return { success: false, error: 'Customer not found.' };
+
+    const row = getSheetRowValues_(details.sheet, rowNumber);
+    if (columns.subscriptionPlan !== -1) row[columns.subscriptionPlan] = trim_(subscriptionPlan);
+    if (columns.monthlyReservationLimit !== -1) row[columns.monthlyReservationLimit] = limit;
+    // Ensure the subscription reads as Active once a plan is set, without
+    // touching Account Status (which the admin controls separately).
+    if (columns.subscriptionStatus !== -1) row[columns.subscriptionStatus] = 'Active';
+
+    setSheetRowValues_(details.sheet, rowNumber, row);
+    return { success: true, message: '✅ ' + trim_(row[columns.name]) + ' plan updated (limit ' + limit + '/month).' };
+  } catch (err) {
+    return reportError_('updateSubscriptionPlan', err, adminCredential);
+  }
+}
+
 function updateCustomerStatus(customerName, newStatus, adminCredential) {
   try {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };

@@ -1300,6 +1300,40 @@
   </div>
 </div>
 
+<!-- ══════════════ UPDATE SUBSCRIPTION PLAN MODAL (admin) ══════════════ -->
+<div class="modal fade" id="updatePlanModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title text-white"><i class="bi bi-arrow-repeat me-2"></i>Update subscription plan</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" style="filter:invert(1)"></button>
+      </div>
+      <div class="modal-body">
+        <p class="mb-3">Change the subscription plan for <b id="updatePlanCustName"></b>.</p>
+        <div class="mb-2">
+          <label class="form-label" for="updatePlanSelect">Subscription plan</label>
+          <select id="updatePlanSelect" class="form-select">
+            <option value="4">4 books / month</option>
+            <option value="6">6 books / month</option>
+            <option value="8">8 books / month</option>
+            <option value="10">10 books / month</option>
+            <option value="12">12 books / month</option>
+          </select>
+        </div>
+        <div class="small text-muted">
+          <i class="bi bi-info-circle me-1"></i>Updates the monthly reservation limit. Does not change the account status.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-success" id="updatePlanSubmitBtn" onclick="submitUpdatePlan()">
+          <i class="bi bi-check2 me-1"></i>Save plan
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════════════ RESET PASSWORD MODAL ══════════════ -->
 <div class="modal fade" id="resetModal" tabindex="-1">
   <div class="modal-dialog modal-dialog-centered">
@@ -1425,10 +1459,12 @@ const customerAuthModal = new bootstrap.Modal('#customerAuthModal');
 const limitModal = new bootstrap.Modal('#limitModal');
 const confirmModal = new bootstrap.Modal('#confirmModal');
 const approveModal = new bootstrap.Modal('#approveModal');
+const updatePlanModal = new bootstrap.Modal('#updatePlanModal');
 const resetModal = new bootstrap.Modal('#resetModal');
 const adminResetCodeModal = new bootstrap.Modal('#adminResetCodeModal');
 let pendingReserveBookNo = '';
 let approveCustomerId = ''; // customer currently being approved in the modal
+let updatePlanCustomerId = ''; // customer whose plan is being edited in the modal
 
 // ════════════════════════════════════════════════
 // Input validation (client-side)
@@ -1500,6 +1536,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (statusBtn) { doUpdateStatus(statusBtn.dataset.customerName, Number(statusBtn.dataset.customerIdx)); return; }
     const approveBtn = event.target.closest('.approve-customer-btn');
     if (approveBtn) { doApproveCustomer(approveBtn.dataset.customerId, approveBtn.dataset.customerName); return; }
+    const planBtn = event.target.closest('.update-plan-btn');
+    if (planBtn) { doUpdatePlan(planBtn.dataset.customerId, planBtn.dataset.customerName, planBtn.dataset.currentLimit); return; }
     const resetBtn = event.target.closest('.reset-pw-btn');
     if (resetBtn) doGenerateResetCode(resetBtn.dataset.customerId, resetBtn.dataset.customerName);
   });
@@ -3663,6 +3701,11 @@ function renderCustomers(list) {
                    data-customer-name="${escAttr(c.name)}" data-customer-idx="${idx}" title="Update status">
              <i class="bi bi-check2"></i>
            </button>
+           <button class="btn btn-sm btn-outline-primary update-plan-btn"
+                   data-customer-id="${escAttr(c.customerId)}" data-customer-name="${escAttr(c.name)}"
+                   data-current-limit="${escAttr(customerLimitFor_(c))}" title="Update subscription plan">
+             <i class="bi bi-arrow-repeat"></i>
+           </button>
            <button class="btn btn-sm btn-outline-secondary reset-pw-btn"
                    data-customer-id="${escAttr(c.customerId)}" data-customer-name="${escAttr(c.name)}"
                    title="${c.email ? 'Generate a password-reset code to share' : 'Add an email for this customer first'}"${c.email ? '' : ' disabled'}>
@@ -3733,6 +3776,45 @@ function submitApproveCustomer() {
       showToast('Something went wrong. Please try again.', 'danger');
     })
     .approveCustomer(approveCustomerId, plan, limit, adminToken);
+}
+
+// Open the "Update subscription plan" modal for an existing customer, preselecting
+// their current plan (derived from their monthly limit) when it's one we offer.
+function doUpdatePlan(customerId, customerName, currentLimit) {
+  if (!customerId) { showToast('Missing customer id.', 'danger'); return; }
+  updatePlanCustomerId = customerId;
+  document.getElementById('updatePlanCustName').textContent = customerName || customerId;
+  const select = document.getElementById('updatePlanSelect');
+  const current = String(parseInt(currentLimit, 10) || '');
+  select.value = [...select.options].some(o => o.value === current) ? current : '4';
+  updatePlanModal.show();
+}
+
+// Confirm a plan change: the selected value is the new monthly reservation limit,
+// and the plan string is derived from it (e.g. "6 books/month").
+function submitUpdatePlan() {
+  if (!updatePlanCustomerId) { showToast('Missing customer id.', 'danger'); return; }
+  const limit = parseInt(document.getElementById('updatePlanSelect').value, 10);
+  if (!(limit > 0)) { showToast('Please choose a subscription plan.', 'warning'); return; }
+  const plan = limit + ' books/month';
+
+  setButtonLoading('updatePlanModal', true);
+  google.script.run
+    .withSuccessHandler(res => {
+      setButtonLoading('updatePlanModal', false);
+      if (res.success) {
+        updatePlanModal.hide();
+        showToast(res.message, 'success');
+        loadCustomers();
+      } else {
+        showToast(res.error || 'Could not update plan.', 'danger');
+      }
+    })
+    .withFailureHandler(() => {
+      setButtonLoading('updatePlanModal', false);
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .updateSubscriptionPlan(updatePlanCustomerId, plan, limit, adminToken);
 }
 
 // Admin: generate a one-time password-reset code for a customer, then show it in
