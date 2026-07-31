@@ -1376,7 +1376,11 @@ let activeBook   = null;
 let adminMode    = false;
 let adminToken   = '';
 let customerToken = localStorage.getItem('kfkCustomerToken') || '';
-let currentCustomer = null;
+// Hydrate the last-known customer profile synchronously so the header paints in
+// the logged-in state on first load (avoids a "logged-out → logged-in" flash
+// while the server re-validates the token). The server response confirms or
+// corrects this a moment later.
+let currentCustomer = customerToken ? readCachedCustomer_() : null;
 // Anonymous preview state: whether the last load was capped, and the true total.
 let previewCapped     = false;
 let previewTotalCount = 0;
@@ -2794,6 +2798,21 @@ function logoutEveryone() {
 // ════════════════════════════════════════════════
 // Customer login / claim
 // ════════════════════════════════════════════════
+// Cache the customer profile alongside the token so the header can render the
+// logged-in state instantly on the next page load, before the server responds.
+function writeCachedCustomer_(customer) {
+  try {
+    if (customer) localStorage.setItem('kfkCustomerProfile', JSON.stringify(customer));
+    else          localStorage.removeItem('kfkCustomerProfile');
+  } catch (e) { /* localStorage may be unavailable — non-fatal */ }
+}
+function readCachedCustomer_() {
+  try {
+    const raw = localStorage.getItem('kfkCustomerProfile');
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
 function restoreCustomerSession() {
   renderCustomerState();
   if (!customerToken) return;
@@ -2802,6 +2821,7 @@ function restoreCustomerSession() {
     .withSuccessHandler(res => {
       if (res && res.success && res.customer) {
         currentCustomer = res.customer;
+        writeCachedCustomer_(res.customer);
         renderCustomerState();
         loadMyReadBooks();
       } else {
@@ -2992,6 +3012,7 @@ function handleCustomerAuthResponse(res) {
     customerToken = res.token;
     currentCustomer = res.customer;
     localStorage.setItem('kfkCustomerToken', customerToken);
+    writeCachedCustomer_(res.customer);
     // "Remember me": store only the username (email/phone), never the password.
     if (document.getElementById('rememberMe').checked) {
       localStorage.setItem('kfkRememberedUser', res.customer.email || res.customer.phone || '');
@@ -3093,6 +3114,7 @@ function submitResetPassword() {
         customerToken = res.token;
         currentCustomer = res.customer;
         localStorage.setItem('kfkCustomerToken', customerToken);
+        writeCachedCustomer_(res.customer);
         resetModal.hide();
         renderCustomerState();
         loadBooks();
@@ -3127,6 +3149,7 @@ function clearCustomerSession() {
   myReadBooks = new Set();    // don't carry reading history across sessions
   myReadHistory = [];
   localStorage.removeItem('kfkCustomerToken');
+  writeCachedCustomer_(null);
   renderCustomerState();
 }
 
