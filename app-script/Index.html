@@ -979,6 +979,17 @@
           <label class="form-label">Address</label>
           <input type="text" id="cAddress" class="form-control form-control-sm" placeholder="Full address">
         </div>
+        <div class="col-sm-6">
+          <label class="form-label" for="cPlan">Subscription plan</label>
+          <select id="cPlan" class="form-select form-select-sm">
+            <option value="">Not set (approve later)</option>
+            <option value="4">4 books / month</option>
+            <option value="6">6 books / month</option>
+            <option value="8">8 books / month</option>
+            <option value="10">10 books / month</option>
+            <option value="12">12 books / month</option>
+          </select>
+        </div>
       </div>
       <div class="mt-3">
         <button class="btn btn-success btn-sm" onclick="submitAddCustomer()">
@@ -1271,6 +1282,8 @@
             <option value="4">4 books / month</option>
             <option value="6">6 books / month</option>
             <option value="8">8 books / month</option>
+            <option value="10">10 books / month</option>
+            <option value="12">12 books / month</option>
           </select>
         </div>
         <div class="small text-muted">
@@ -3771,6 +3784,7 @@ function submitAddCustomer() {
   const phone    = document.getElementById('cPhone').value.trim();
   const location = document.getElementById('cLocation').value.trim();
   const address  = document.getElementById('cAddress').value.trim();
+  const plan     = document.getElementById('cPlan').value;
 
   const err = firstError_([
     { ok: !!name,           msg: 'Customer name is required.' },
@@ -3795,7 +3809,7 @@ function submitAddCustomer() {
           showBanner(`New customer added. Customer ID: ${res.customerId} · Invite code: ${res.inviteCode} — share these so they can set up login.`, 'success', 0);
         }
         // Clear form and close
-        ['cName','cEmail','cPhone','cLocation','cAddress'].forEach(id => document.getElementById(id).value = '');
+        ['cName','cEmail','cPhone','cLocation','cAddress','cPlan'].forEach(id => document.getElementById(id).value = '');
         toggleAddForm();
         loadCustomers();
       } else {
@@ -3803,7 +3817,7 @@ function submitAddCustomer() {
       }
     })
     .withFailureHandler(err => showToast('Something went wrong. Please try again.', 'danger'))
-    .addCustomer(name, date, location, address, email, normalizedPhone, adminToken);
+    .addCustomer(name, date, location, address, email, normalizedPhone, plan, adminToken);
 }
 </script>
 </body>

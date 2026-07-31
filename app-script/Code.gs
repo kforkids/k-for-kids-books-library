@@ -2199,7 +2199,7 @@ function getCustomers(adminCredential) {
   }
 }
 
-function addCustomer(name, dateStart, location, address, email, phone, adminCredential) {
+function addCustomer(name, dateStart, location, address, email, phone, subscriptionPlan, adminCredential) {
   try {
     if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
     name = trim_(name);
@@ -2264,7 +2264,21 @@ function addCustomer(name, dateStart, location, address, email, phone, adminCred
     if (phoneCol !== -1) setCustomerDetailValue_(row, phoneCol, phone);
     setCustomerDetailValue_(row, columns.accountStatus, 'Active');
     setCustomerDetailValue_(row, columns.activeReservationCount, 0);
-    setCustomerDetailValue_(row, columns.subscriptionStatus, 'NA');
+
+    // If the admin picked a subscription plan up front, activate it now (plan
+    // string + monthly limit derived from it, e.g. "6" → 6/month). Otherwise
+    // leave the subscription unset ('NA') so it can be approved later.
+    // buildCustomerDetailsColumns_ omits these two, so resolve them here.
+    const planCol  = getHeaderIndex_(headerMap, 'Subscription Plan');
+    const limitCol = getHeaderIndex_(headerMap, 'Monthly Reservation Limit');
+    const planLimit = parseInt(subscriptionPlan, 10);
+    if (planLimit > 0) {
+      setCustomerDetailValue_(row, columns.subscriptionStatus, 'Active');
+      setCustomerDetailValue_(row, planCol, trim_(subscriptionPlan));
+      setCustomerDetailValue_(row, limitCol, planLimit);
+    } else {
+      setCustomerDetailValue_(row, columns.subscriptionStatus, 'NA');
+    }
     setCustomerDetailValue_(row, columns.authMethod, 'invite_pending');
     setCustomerDetailValue_(row, columns.inviteCodeHash, hashInviteCode_(customerId, inviteCode));
     setCustomerDetailValue_(row, columns.inviteStatus, 'Pending');
