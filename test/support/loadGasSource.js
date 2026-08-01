@@ -163,6 +163,84 @@ export function fakePropertiesService(initialProps = {}) {
   };
 }
 
+// Auto-vivifying fake DOM: getElementById/querySelector return a fresh fake
+// element (style/classList/textContent) the first time an id/selector is
+// asked for, and the SAME object on every later call — so a test can grab a
+// reference before invoking app code and read back whatever that code set on
+// it, without hand-declaring every element the real Index.html markup has.
+// querySelectorAll matches by class name only (e.g. '.stat-admin'), tracked
+// via a lightweight registry so elements can be found by class after the
+// fact even though nothing here builds a real DOM tree.
+export function fakeDocument() {
+  const byId = new Map();
+  const byClass = new Map(); // className -> Set<element>
+
+  function makeElement(classNames = []) {
+    const classSet = new Set(classNames);
+    const el = {
+      style: {},
+      textContent: '',
+      value: '',
+      children: [],
+      classList: {
+        add: (...names) => names.forEach(n => classSet.add(n)),
+        remove: (...names) => names.forEach(n => classSet.delete(n)),
+        toggle: (name, force) => {
+          const shouldHave = force === undefined ? !classSet.has(name) : Boolean(force);
+          if (shouldHave) classSet.add(name); else classSet.delete(name);
+        },
+        contains: name => classSet.has(name)
+      },
+      setAttribute() {},
+      getAttribute() { return null; },
+      addEventListener() {},
+      appendChild(child) { el.children.push(child); return child; },
+      querySelector() { return null; },
+      querySelectorAll() { return []; }
+    };
+    classNames.forEach(name => {
+      if (!byClass.has(name)) byClass.set(name, new Set());
+      byClass.get(name).add(el);
+    });
+    return el;
+  }
+
+  return {
+    getElementById(id) {
+      if (!byId.has(id)) byId.set(id, makeElement());
+      return byId.get(id);
+    },
+    querySelector(selector) {
+      // Only the small subset of selectors this app's JS actually uses.
+      if (selector.startsWith('.')) {
+        const set = byClass.get(selector.slice(1));
+        return set ? [...set][0] || null : null;
+      }
+      return null;
+    },
+    querySelectorAll(selector) {
+      if (selector.startsWith('.')) {
+        const set = byClass.get(selector.slice(1));
+        return set ? [...set] : [];
+      }
+      return [];
+    },
+    // Test-only: register an element under one or more classes so
+    // querySelectorAll('.stat-admin') etc. can find it, mirroring how the
+    // real markup assigns classes in Index.html.
+    __withClasses(id, ...classNames) {
+      const el = this.getElementById(id);
+      classNames.forEach(name => {
+        el.classList.add(name);
+        if (!byClass.has(name)) byClass.set(name, new Set());
+        byClass.get(name).add(el);
+      });
+      return el;
+    },
+    addEventListener() {}
+  };
+}
+
 export function fakeSession(overrides = {}) {
   return {
     getScriptTimeZone: () => overrides.timeZone || 'Asia/Kolkata',

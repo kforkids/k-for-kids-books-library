@@ -675,7 +675,7 @@
   }
   .loading-pct  { font-size: .78rem; color: #aaa; margin-top: 6px; text-align: right; }
   .loading-msg  { font-size: .92rem; color: #777; margin-bottom: 6px; min-height: 1.4em; text-align: center; transition: opacity .4s; }
-  .loading-sub  { font-size: .78rem; color: #bbb; font-style: italic; text-align: center; max-width: 280px; min-height: 2.4em; transition: opacity .4s; }
+  .loading-sub  { font-size: .88rem; color: #888; font-style: italic; text-align: center; max-width: 280px; min-height: 2.4em; transition: opacity .4s; }
 
   /* ── Toast ── */
   .toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999; }
@@ -3394,6 +3394,12 @@ function clearCustomerSession() {
   localStorage.removeItem('kfkCustomerToken');
   writeCachedCustomer_(null);
   renderCustomerState();
+  // Hide customer-only UI (stats "read before" count, "Recently read by you")
+  // immediately instead of leaving stale data on screen until the next
+  // loadBooks() round-trip completes — that gap was visible as "logged out"
+  // toast + still-showing read history for however long the reload took.
+  updateStats();
+  renderRecentlyRead();
 }
 
 // The Activity-Log timestamp is "dd/MM/yyyy HH:mm:ss" (IST). For display we
