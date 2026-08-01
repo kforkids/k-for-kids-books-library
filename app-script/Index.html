@@ -1423,8 +1423,11 @@
 let allBooks     = [];
 let filtered     = [];
 let activeBook   = null;
-let adminMode    = false;
-let adminToken   = '';
+let adminToken   = localStorage.getItem('kfkAdminToken') || '';
+// Optimistically hydrate admin mode from the cached token so the header paints
+// admin-logged-in on first frame; restoreAdminSession() confirms it a moment
+// later and logs out silently if the token has expired/is invalid.
+let adminMode    = Boolean(adminToken);
 let customerToken = localStorage.getItem('kfkCustomerToken') || '';
 // Hydrate the last-known customer profile synchronously so the header paints in
 // the logged-in state on first load (avoids a "logged-out → logged-in" flash
@@ -1520,6 +1523,7 @@ function attachPhoneInputGuard_(id) {
 // ════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
   restoreCustomerSession();
+  restoreAdminSession();
   loadBooks();
 
   document.getElementById('booksGrid').addEventListener('click', event => {
@@ -2815,6 +2819,36 @@ function runAdminAction_(action, bookNo) {
     [action](bookNo, adminToken);
 }
 
+function showAdminUi_() {
+  document.getElementById('adminModeBadge').style.display = '';
+  document.getElementById('adminTabBar').style.display    = '';
+}
+
+// On page load, silently re-validate a cached admin token against the server
+// session cache instead of dropping straight back to logged-out state.
+function restoreAdminSession() {
+  if (!adminToken) return;
+  showAdminUi_(); // optimistic paint; corrected below if the token is stale
+  google.script.run
+    .withSuccessHandler(res => {
+      if (!(res && res.success)) logoutAdminLocally_();
+    })
+    .withFailureHandler(() => logoutAdminLocally_())
+    .validateAdminToken(adminToken);
+}
+
+// Clears local admin state only — no server round-trip (used when the cached
+// token already failed validation, so there is nothing left to revoke).
+function logoutAdminLocally_() {
+  adminMode  = false;
+  adminToken = '';
+  localStorage.removeItem('kfkAdminToken');
+  document.getElementById('adminModeBadge').style.display = 'none';
+  document.getElementById('adminTabBar').style.display    = 'none';
+  renderCustomerState();
+  loadBooks();
+}
+
 // ════════════════════════════════════════════════
 // Admin logout (login is handled by the unified doLogin)
 // ════════════════════════════════════════════════
@@ -2822,6 +2856,7 @@ function logoutAdmin() {
   const token = adminToken;
   adminMode      = false;
   adminToken     = '';
+  localStorage.removeItem('kfkAdminToken');
   allCustomers   = [];
   activeAdminTab = 'books';
   document.getElementById('adminModeBadge').style.display  = 'none';
@@ -2980,8 +3015,8 @@ function doLogin() {
         // Admin login.
         adminMode = true;
         adminToken = res.token;
-        document.getElementById('adminModeBadge').style.display = '';
-        document.getElementById('adminTabBar').style.display    = '';
+        localStorage.setItem('kfkAdminToken', adminToken);
+        showAdminUi_();
         customerAuthModal.hide();
         renderCustomerState();
         showToast('Admin mode active.', 'success');

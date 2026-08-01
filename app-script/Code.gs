@@ -2476,6 +2476,12 @@ function logoutAdminSession(token) {
   return { success: true };
 }
 
+// Used on page load to silently re-validate a cached admin token instead of
+// dropping back to logged-out state on every reload.
+function validateAdminToken(token) {
+  return { success: verifyAdminCredential_(token) };
+}
+
 function verifyAdminPassword(password) {
   if (!checkRateLimit_('admin-password-check', 10, 300)) return false;
   return verifyAdmin_(password);
