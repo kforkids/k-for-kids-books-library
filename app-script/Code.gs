@@ -947,6 +947,23 @@ function warmImageCache() {
   }
 }
 
+// Admin-triggered "Reload image cache" — forces a fresh Drive scan (instead of
+// reusing a still-warm cache) so newly renamed image files show up immediately,
+// then rebuilds the public books cache so the new URLs are served right away.
+function reloadImageCache(adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) {
+      return { success: false, error: 'Admin session expired. Please log in again.' };
+    }
+    CacheService.getScriptCache().remove(IMAGE_CACHE_KEY);
+    const imageMap = getImageMap_();
+    invalidatePublicBooksCache_();
+    return { success: true, imageCount: Object.keys(imageMap).length };
+  } catch (err) {
+    return reportError_('reloadImageCache', err);
+  }
+}
+
 function reserveBook(bookNo, subscriberName, phone, notes) {
   try {
     resetRequestCache_();

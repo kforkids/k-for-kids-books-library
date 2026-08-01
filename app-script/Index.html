@@ -802,6 +802,9 @@
   <button class="admin-tab" id="tabCustomers" onclick="switchAdminTab('customers')">
     <i class="bi bi-people me-1"></i>Customers
   </button>
+  <button class="admin-tab" id="btnReloadImageCache" onclick="reloadImageCache_()" title="Force a fresh scan of book cover images (e.g. after renaming files)">
+    <i class="bi bi-arrow-clockwise me-1"></i>Reload image cache
+  </button>
 </div>
 
 <div class="sticky-controls">
@@ -2817,6 +2820,33 @@ function runAdminAction_(action, bookNo) {
     })
     .withFailureHandler(err => showBanner('Something went wrong. Please try again.', 'danger'))
     [action](bookNo, adminToken);
+}
+
+// Admin-only: force a fresh Drive scan for book cover images instead of
+// waiting out the 30-minute cache TTL — use after bulk-renaming image files.
+function reloadImageCache_() {
+  const btn = document.getElementById('btnReloadImageCache');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Reloading…';
+
+  google.script.run
+    .withSuccessHandler(res => {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (res && res.success) {
+        showToast(`✓ Image cache reloaded (${res.imageCount} images).`, 'success');
+        loadBooks();
+      } else {
+        showToast(res && res.error || 'Failed to reload image cache.', 'danger');
+      }
+    })
+    .withFailureHandler(() => {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .reloadImageCache(adminToken);
 }
 
 function showAdminUi_() {
