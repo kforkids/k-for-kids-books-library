@@ -75,9 +75,19 @@ export function loadIndexHtmlScript(overrides = {}) {
     // Real script does `new bootstrap.Modal('#someId')` at top-level scope for
     // several modals — must be a working fake constructor, not undefined, or
     // the whole script aborts before reaching any function declaration below it.
-    bootstrap: { Modal: class { hide() {} show() {} } },
+    bootstrap: {
+      Modal: class { hide() {} show() {} },
+      Toast: { getOrCreateInstance: () => ({ show() {}, hide() {} }) }
+    },
     IntersectionObserver: class { observe() {} disconnect() {} },
     ResizeObserver: class { observe() {} disconnect() {} },
+    // showLoading()'s fake progress-bar animation uses these; tests don't
+    // care about the animation itself, just that calling it doesn't throw.
+    setInterval: () => 0,
+    clearInterval: () => {},
+    setTimeout: () => 0,
+    clearTimeout: () => {},
+    requestAnimationFrame: fn => { fn(); return 0; },
     ...overrides
   });
   const context = vm.createContext(sandbox);

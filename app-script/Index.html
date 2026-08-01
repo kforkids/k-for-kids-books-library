@@ -3173,6 +3173,10 @@ function doLogin() {
         showAdminUi_();
         customerAuthModal.hide();
         renderCustomerState();
+        // Refresh immediately in case a customer session's stats/recently-read
+        // were still showing — otherwise they'd linger until loadBooks() resolves.
+        updateStats();
+        renderRecentlyRead();
         showToast('Admin mode active.', 'success');
         loadBooks();
       } else {
@@ -3254,6 +3258,12 @@ function handleCustomerAuthResponse(res) {
   if (res && res.success && res.token && res.customer) {
     customerToken = res.token;
     currentCustomer = res.customer;
+    // Reset read-history state before the fresh loadMyReadBooks() fetch
+    // resolves — otherwise the stats strip / recently-read section keep
+    // showing whatever the PREVIOUS session had (wrong customer's data, or a
+    // stale "1 read before") for however long that round-trip takes.
+    myReadBooks = new Set();
+    myReadHistory = [];
     localStorage.setItem('kfkCustomerToken', customerToken);
     writeCachedCustomer_(res.customer);
     // "Remember me": store only the username (email/phone), never the password.
@@ -3264,6 +3274,8 @@ function handleCustomerAuthResponse(res) {
     }
     customerAuthModal.hide();
     renderCustomerState();
+    updateStats();
+    renderRecentlyRead();
     loadBooks();
     loadMyReadBooks();
     showToast(res.message || 'Logged in.', 'success');
