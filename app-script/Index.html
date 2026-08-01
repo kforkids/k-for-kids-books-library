@@ -206,6 +206,10 @@
   .status-badge {
     position: absolute;
     top: 7px; right: 7px;
+    max-width: calc(50% - 12px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     font-size: .65rem;
     font-weight: 700;
     padding: 2px 8px;
@@ -238,8 +242,12 @@
   .read-badge {
     position: absolute;
     top: 7px; left: 7px;
+    max-width: calc(50% - 12px);
     display: inline-flex;
     align-items: center;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-size: .62rem;
     font-weight: 700;
     padding: 2px 8px;
@@ -1854,7 +1862,7 @@ function bookCardHtml(book) {
     : '';
   // "Read before" badge: books this logged-in customer has completed a loan on.
   const readBadge = (!adminMode && currentCustomer && myReadBooks.has(String(book.bookNo)))
-    ? `<span class="read-badge"><i class="bi bi-check2 me-1"></i>Read before</span>`
+    ? `<span class="read-badge" title="Read before"><i class="bi bi-check2 me-1"></i>Read</span>`
     : '';
 
   // Hover overlay: the full details (author, category, language, age) revealed on
@@ -1975,7 +1983,7 @@ function renderRecentlyRead() {
     return `<div class="book-card">
         <div class="book-img-wrap">
           <div class="book-img-placeholder"><i class="bi bi-book"></i><small>${escHtml(h.bookNo)}</small></div>
-          <span class="read-badge"><i class="bi bi-check2 me-1"></i>Read before</span>
+          <span class="read-badge" title="Read before"><i class="bi bi-check2 me-1"></i>Read</span>
         </div>
         <div class="book-info"><div class="book-title">${escHtml(h.bookName || 'Book ' + h.bookNo)}</div></div>
       </div>`;
