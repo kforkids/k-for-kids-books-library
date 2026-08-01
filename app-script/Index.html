@@ -206,7 +206,7 @@
   .status-badge {
     position: absolute;
     top: 7px; right: 7px;
-    max-width: calc(50% - 12px);
+    max-width: calc(100% - 14px);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -242,12 +242,9 @@
   .read-badge {
     position: absolute;
     top: 7px; left: 7px;
-    max-width: calc(50% - 12px);
     display: inline-flex;
     align-items: center;
-    overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
     font-size: .62rem;
     font-weight: 700;
     padding: 2px 8px;
@@ -255,6 +252,12 @@
     background: #185fa5;
     color: #fff;
     letter-spacing: .02em;
+  }
+  /* When a status badge is also showing, stack read-badge below it (same
+     right-aligned column) instead of squeezing both onto one row — neither
+     label may truncate, so there's no room to share a row. */
+  .book-img-wrap:has(.status-badge) .read-badge {
+    top: 32px; left: auto; right: 7px;
   }
 
   /* ── Optimistic "saving…" overlay on a card ── */
