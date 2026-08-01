@@ -105,6 +105,8 @@
     display: flex;
     gap: 16px;
     flex-wrap: wrap;
+    position: sticky;
+    z-index: 94;
   }
   .stats-bar span, .stats-bar .stat-link { display: flex; align-items: center; gap: 4px; }
 
@@ -692,6 +694,9 @@
     background: #fff3e0;
     border-bottom: 2px solid #ffe0b2;
     display: flex;
+    position: sticky;
+    top: var(--app-header-height);
+    z-index: 96;
   }
   .admin-tab {
     background: none;
@@ -1521,6 +1526,31 @@ function attachPhoneInputGuard_(id) {
   });
 }
 
+// Keep the admin tab bar, search/filter bar, and stats strip all stuck to the
+// top while scrolling, stacked directly under whichever bars are above them.
+// Their combined height varies (filters/stats wrap on narrow screens, the
+// admin tab bar only shows for admins), so the offsets are measured instead
+// of hardcoded.
+function syncStickyOffsets_() {
+  const header       = document.querySelector('.app-header');
+  const adminTabBar  = document.getElementById('adminTabBar');
+  const stickyControls = document.querySelector('.sticky-controls');
+  const statsBar     = document.getElementById('statsBar');
+
+  let offset = header ? header.offsetHeight : 0;
+  if (adminTabBar && adminTabBar.style.display !== 'none') {
+    adminTabBar.style.top = offset + 'px';
+    offset += adminTabBar.offsetHeight;
+  }
+  if (stickyControls) {
+    stickyControls.style.top = offset + 'px';
+    offset += stickyControls.offsetHeight;
+  }
+  if (statsBar) {
+    statsBar.style.top = offset + 'px';
+  }
+}
+
 // ════════════════════════════════════════════════
 // Init
 // ════════════════════════════════════════════════
@@ -1528,6 +1558,17 @@ document.addEventListener('DOMContentLoaded', () => {
   restoreCustomerSession();
   restoreAdminSession();
   loadBooks();
+
+  syncStickyOffsets_();
+  window.addEventListener('resize', syncStickyOffsets_);
+  // Any layout change to the bars above the stats strip (admin tab bar
+  // appearing/disappearing, filters wrapping to a new line, etc.) needs a
+  // re-measure — a ResizeObserver catches all of these without having to hook
+  // every call site that can change their height.
+  const stickyObserver = new ResizeObserver(() => syncStickyOffsets_());
+  [document.getElementById('adminTabBar'), document.querySelector('.sticky-controls')]
+    .filter(Boolean)
+    .forEach(el => stickyObserver.observe(el));
 
   document.getElementById('booksGrid').addEventListener('click', event => {
     // A quick-action icon takes precedence over opening the detail modal.
@@ -1914,6 +1955,7 @@ function updateStats() {
     return;
   }
   bar.style.display = '';
+  syncStickyOffsets_(); // re-measure now that the strip's own visibility changed
 
   if (adminMode) {
     // Admin sees the full library stats.
