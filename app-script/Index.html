@@ -1538,6 +1538,10 @@ let limitRetryDone = false;
 // automatically when the in-flight action finishes — no re-click needed.
 let reservationActionInFlight = false;
 let queuedReserveBookNo = '';
+// Throttle for the tab-focus refresh below — avoids re-fetching on every
+// rapid tab switch, e.g. alt-tabbing back and forth.
+let lastFocusRefreshAt_ = 0;
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 15000;
 
 const bookModal    = new bootstrap.Modal('#bookModal');
 const reserveModal = new bootstrap.Modal('#reserveModal');
@@ -1679,6 +1683,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Restrict phone fields to digits-only as the user types.
   ['registerPhone', 'claimPhone', 'rPhone', 'cPhone'].forEach(attachPhoneInputGuard_);
+
+  // Refresh on tab focus: book statuses and a customer's read history can
+  // change elsewhere (an admin issues/returns a book in another tab) while
+  // this tab sits open. Without this, a customer only ever sees changes made
+  // after they logged in — everything else looks "stuck" until they log out
+  // and back in. Throttled so rapid tab-switching doesn't spam the server.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (Date.now() - lastFocusRefreshAt_ < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
+    lastFocusRefreshAt_ = Date.now();
+    loadBooks();
+    if (customerToken && currentCustomer) loadMyReadBooks();
+  });
 });
 
 function loadBooks() {
