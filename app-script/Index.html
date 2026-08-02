@@ -1131,8 +1131,11 @@
             </div>
             <div class="mb-2">
               <label class="form-label" for="loginPassword">Password</label>
-              <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password"
-                     onkeydown="if(event.key==='Enter') submitCustomerAuth()">
+              <div class="input-group">
+                <input type="password" id="loginPassword" name="password" class="form-control" autocomplete="current-password"
+                       onkeydown="if(event.key==='Enter') submitCustomerAuth()">
+                <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('loginPassword', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
+              </div>
             </div>
             <div class="form-check mb-2">
               <input class="form-check-input" type="checkbox" id="rememberMe">
@@ -1167,9 +1170,20 @@
           </div>
           <div class="mb-2">
             <label class="form-label" for="registerPassword">Create Password</label>
-            <input type="password" id="registerPassword" class="form-control" autocomplete="new-password"
-                   onkeydown="if(event.key==='Enter') selfSignupCustomer()">
+            <div class="input-group">
+              <input type="password" id="registerPassword" class="form-control" autocomplete="new-password"
+                     onkeydown="if(event.key==='Enter') selfSignupCustomer()">
+              <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('registerPassword', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
+            </div>
             <div class="form-text">Use at least 8 characters.</div>
+          </div>
+          <div class="mb-2">
+            <label class="form-label" for="registerPasswordConfirm">Re-enter Password</label>
+            <div class="input-group">
+              <input type="password" id="registerPasswordConfirm" class="form-control" autocomplete="new-password"
+                     onkeydown="if(event.key==='Enter') selfSignupCustomer()">
+              <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('registerPasswordConfirm', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
+            </div>
           </div>
           <div class="small">
             <a href="#" onclick="showLoginPane(event)">← Already have an account? Log in</a>
@@ -1199,8 +1213,11 @@
           </div>
           <div class="mb-2">
             <label class="form-label">Create Password</label>
-            <input type="password" id="claimPassword" class="form-control" autocomplete="new-password"
-                   onkeydown="if(event.key==='Enter') claimExistingCustomer()">
+            <div class="input-group">
+              <input type="password" id="claimPassword" class="form-control" autocomplete="new-password"
+                     onkeydown="if(event.key==='Enter') claimExistingCustomer()">
+              <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('claimPassword', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
+            </div>
             <div class="form-text">Use at least 8 characters.</div>
           </div>
           <div class="small">
@@ -1437,8 +1454,11 @@
         </div>
         <div class="mb-2">
           <label class="form-label" for="resetNewPassword">New password</label>
-          <input type="password" id="resetNewPassword" class="form-control" autocomplete="new-password"
-                 onkeydown="if(event.key==='Enter') submitResetPassword()">
+          <div class="input-group">
+            <input type="password" id="resetNewPassword" class="form-control" autocomplete="new-password"
+                   onkeydown="if(event.key==='Enter') submitResetPassword()">
+            <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('resetNewPassword', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
+          </div>
           <div class="form-text">Use at least 8 characters.</div>
         </div>
         <div class="small"><a href="#" onclick="backToLoginFromReset(event)">← Back to login</a></div>
@@ -1591,6 +1611,18 @@ function attachPhoneInputGuard_(id) {
     v = v.replace(/(?!^)\+/g, ''); // '+' only at start
     el.value = v;
   });
+}
+
+// Toggle a password <input> between masked/visible and flip the trigger
+// button's eye icon to match. `btn` is the button element clicked.
+function togglePasswordVisibility(inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  const icon = btn.querySelector('i');
+  const showing = el.type === 'password';
+  el.type = showing ? 'text' : 'password';
+  icon.className = showing ? 'bi bi-eye-slash' : 'bi bi-eye';
+  btn.setAttribute('aria-label', showing ? 'Hide password' : 'Show password');
 }
 
 // Keep the admin tab bar, search/filter bar, and stats strip all stuck to the
@@ -3075,6 +3107,7 @@ function openCustomerAuth() {
   document.getElementById('registerPhone').value = '';
   document.getElementById('registerEmail').value = '';
   document.getElementById('registerPassword').value = '';
+  document.getElementById('registerPasswordConfirm').value = '';
   clearAuthError_();
   showLoginPane(); // default to login; openAuthModal() may switch the pane after
   customerAuthModal.show();
@@ -3202,6 +3235,7 @@ function selfSignupCustomer() {
   const email = document.getElementById('registerEmail').value.trim();
   const phone = document.getElementById('registerPhone').value.trim();
   const password = document.getElementById('registerPassword').value;
+  const passwordConfirm = document.getElementById('registerPasswordConfirm').value;
 
   clearAuthError_();
   const err = firstError_([
@@ -3212,7 +3246,9 @@ function selfSignupCustomer() {
     { ok: !!phone,             msg: 'Phone number is required.' },
     { ok: isValidPhone_(phone),msg: 'Enter a valid 10-digit mobile number (digits only, starting 6–9).' },
     { ok: !!password,          msg: 'Please create a password.' },
-    { ok: password.length >= 8,msg: 'Password must be at least 8 characters.' }
+    { ok: password.length >= 8,msg: 'Password must be at least 8 characters.' },
+    { ok: !!passwordConfirm,   msg: 'Please re-enter your password.' },
+    { ok: password === passwordConfirm, msg: 'Passwords do not match.' }
   ]);
   if (err) { showAuthError_(err); return; }
 
