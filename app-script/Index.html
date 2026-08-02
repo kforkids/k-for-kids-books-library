@@ -914,6 +914,9 @@
   <button class="admin-tab" id="btnReloadImageCache" onclick="reloadImageCache_()" title="Force a fresh scan of book cover images (e.g. after renaming files)">
     <i class="bi bi-arrow-clockwise me-1"></i>Reload image cache
   </button>
+  <button class="admin-tab" id="btnBackfillSeries" onclick="backfillSeries_()" title="Auto-tag books by series/franchise (Franklin, Peppa Pig, etc.) based on title/author. Safe to re-run — never overwrites an existing Series value.">
+    <i class="bi bi-tags me-1"></i>Tag series
+  </button>
 </div>
 
 <div class="sticky-controls">
@@ -942,6 +945,13 @@
     <label class="filter-field">
       <span class="filter-label">Age</span>
       <select id="filterAge" class="form-select form-select-sm" onchange="onFilterChange('ageGroup', this.value)">
+        <option value="">All</option>
+      </select>
+    </label>
+
+    <label class="filter-field" id="seriesFilterField" style="display:none">
+      <span class="filter-label">Series</span>
+      <select id="filterSeries" class="form-select form-select-sm" onchange="onFilterChange('series', this.value)">
         <option value="">All</option>
       </select>
     </label>
@@ -1562,7 +1572,7 @@ let previewTotalCount = 0;
 let searchTimer  = null;
 // `mine`: '' (all) | 'reserved' | 'issued' — filters to the logged-in customer's
 // own reserved / issued books, toggled from the stats strip links.
-let filters      = { language: '', ageGroup: '', status: '', search: '', withImage: false, noImage: false, mine: '' };
+let filters      = { language: '', ageGroup: '', series: '', status: '', search: '', withImage: false, noImage: false, mine: '' };
 // Reading history for the logged-in customer, from Activity-Log (completed
 // loans only). myReadBooks is a Set of book numbers for O(1) card lookups;
 // myReadHistory is the dated list (newest first) for the panel + recently-read.
@@ -1810,6 +1820,7 @@ function onBooksLoaded(result, silent) {
   previewTotalCount = result.totalCount || allBooks.length;
   updatePreviewBanner_(); // refresh the top banner's total now that we know it
   renderAgeGroupFilters();
+  renderSeriesFilters();
   applyFilters();
   // Note: getBooks now builds the image map on a cold cache, so the first load
   // already includes image URLs — no warm-then-reload second pass needed.
@@ -1822,6 +1833,7 @@ function applyFilters() {
   const q  = filters.search.toLowerCase();
   const lg = filters.language.toLowerCase();
   const ag = filters.ageGroup.toLowerCase();
+  const sr = filters.series.toLowerCase();
   const st = filters.status.toLowerCase();
 
   filtered = allBooks.filter(b => {
@@ -1830,6 +1842,7 @@ function applyFilters() {
     if (filters.mine === 'read'     && !myReadBooks.has(String(b.bookNo))) return false;
     if (lg && b.language.toLowerCase() !== lg) return false;
     if (ag && ageGroupFilterValue(b.ageGroup) !== ag) return false;
+    if (sr && (b.series || '').toLowerCase() !== sr) return false;
     if (st && b.status.toLowerCase()   !== st) return false;
     if (filters.withImage && !b.imageUrl)       return false;
     if (filters.noImage   &&  b.imageUrl)        return false;
@@ -1930,10 +1943,37 @@ function renderAgeGroupFilters() {
   select.value = current; // keep any prior selection if still valid
 }
 
+// Populate the Series dropdown from the series values present in the
+// collection. Most books aren't part of a tagged series, so the whole field
+// stays hidden until at least one series shows up.
+function renderSeriesFilters() {
+  const field  = document.getElementById('seriesFilterField');
+  const select = document.getElementById('filterSeries');
+  if (!select || !field) return;
+
+  const names = [];
+  const seen = {};
+  allBooks.forEach(book => {
+    const name = String(book.series || '').trim();
+    if (!name || seen[name]) return;
+    seen[name] = true;
+    names.push(name);
+  });
+
+  names.sort((a, b) => a.localeCompare(b));
+
+  const current = filters.series || '';
+  select.innerHTML = `<option value="">All</option>` +
+    names.map(n => `<option value="${escAttr(n)}">${escHtml(n)}</option>`).join('');
+  select.value = current; // keep any prior selection if still valid
+  field.style.display = names.length ? '' : 'none';
+}
+
 function resetFilters() {
-  filters = { language: '', ageGroup: '', status: '', search: '', withImage: false, noImage: false, mine: '' };
+  filters = { language: '', ageGroup: '', series: '', status: '', search: '', withImage: false, noImage: false, mine: '' };
   const lang = document.getElementById('filterLanguage'); if (lang) lang.value = '';
   const age  = document.getElementById('filterAge');      if (age)  age.value = '';
+  const ser  = document.getElementById('filterSeries');   if (ser)  ser.value = '';
   const stat = document.getElementById('filterStatus');   if (stat) stat.value = '';
   const img  = document.getElementById('withImageBtn');   if (img)  img.classList.remove('active');
   const noImg = document.getElementById('noImageBtn');    if (noImg) noImg.classList.remove('active');
@@ -2258,6 +2298,7 @@ function openBookDetail(bookNo) {
         <div class="mb-3">${pill}</div>
         <dl class="book-detail-facts">
           ${book.category ? `<dt>Category</dt><dd>${escHtml(book.category)}</dd>` : ''}
+          ${book.series ? `<dt>Series</dt><dd>${escHtml(book.series)}</dd>` : ''}
           <dt>Language</dt><dd>${escHtml(formatLanguageLabel(book.language) || '—')}</dd>
           ${book.ageGroup ? `<dt>Age group</dt><dd>${escHtml(formatAgeGroup(book.ageGroup))}</dd>` : ''}
           <dt>Book no.</dt><dd>${escHtml(book.bookNo)}</dd>
@@ -3049,6 +3090,34 @@ function reloadImageCache_() {
       showToast('Something went wrong. Please try again.', 'danger');
     })
     .reloadImageCache(adminToken);
+}
+
+// Admin-only: run the one-time (re-runnable) series auto-tagging pass. Never
+// overwrites a cell that already has a Series value, so it's safe to re-run
+// after adding new books or new SERIES_RULES_ in Code.gs.
+function backfillSeries_() {
+  const btn = document.getElementById('btnBackfillSeries');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i>Tagging…';
+
+  google.script.run
+    .withSuccessHandler(res => {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (res && res.success) {
+        showToast(res.message || `✓ Tagged ${res.updated} book(s).`, 'success');
+        loadBooks();
+      } else {
+        showToast(res && res.error || 'Failed to tag series.', 'danger');
+      }
+    })
+    .withFailureHandler(() => {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .backfillBookSeries(adminToken);
 }
 
 function showAdminUi_() {

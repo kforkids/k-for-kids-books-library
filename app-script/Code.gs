@@ -71,6 +71,11 @@ const RESERVATION_UPDATED_AT_HEADER = 'Reservation Updated At';
 // admins see it (with a Hidden badge) and can unhide.
 const VISIBILITY_HEADER = 'Visibility';
 
+// Groups books that belong to the same series/franchise (e.g. "Franklin",
+// "Peppa Pig") so users can filter by it. Auto-populated by
+// backfillBookSeries(); admins can also edit the cell directly in the sheet.
+const SERIES_HEADER = 'Series';
+
 // Issue tracking (linked to a customer). Add these columns to Books-DB manually.
 const ISSUED_CUSTOMER_ID_HEADER = 'Issued Customer ID';
 const ISSUED_AT_HEADER = 'Issued At';
@@ -780,6 +785,7 @@ function getBooks(filters, adminCredential, customerToken) {
     const linkColumns = getExistingBookReservationLinkColumns_(sheet, headerRow);
     const visibilityColumn = getBookVisibilityColumn_(sheet, headerRow);
     const issueColumns = getBookIssueColumns_(sheet, headerRow);
+    const seriesColumn = getBookSeriesColumn_(sheet, headerRow);
     const range    = sheet.getDataRange();
     const displayData = range.getDisplayValues();
     // Raw values for the reservation timestamps — needed so we can format them
@@ -815,6 +821,7 @@ function getBooks(filters, adminCredential, customerToken) {
       const category   = trim_(displayRow[columns.CATEGORY]);
       const issuedTo   = trim_(displayRow[columns.ISSUED_TO]);
       const author     = trim_(displayRow[columns.AUTHOR]);
+      const series     = seriesColumn === -1 ? '' : trim_(displayRow[seriesColumn]);
       const reservationId = linkColumns.reservationId === -1 ? '' : trim_(displayRow[linkColumns.reservationId]);
       const reservedCustomerId = linkColumns.reservedCustomerId === -1 ? '' : trim_(displayRow[linkColumns.reservedCustomerId]);
       const reservedCustomerName = linkColumns.reservedCustomerName === -1 ? '' : trim_(displayRow[linkColumns.reservedCustomerName]);
@@ -850,6 +857,7 @@ function getBooks(filters, adminCredential, customerToken) {
       if (filters) {
         if (filters.language && language.toLowerCase() !== filters.language.toLowerCase()) continue;
         if (filters.status   && status.toLowerCase()   !== filters.status.toLowerCase())   continue;
+        if (filters.series   && series.toLowerCase()   !== filters.series.toLowerCase())   continue;
         if (filters.search) {
           const q = filters.search.toLowerCase();
           if (!bookName.toLowerCase().includes(q) &&
@@ -861,7 +869,7 @@ function getBooks(filters, adminCredential, customerToken) {
       books.push({
         rowIndex: i + 1,
         srNo: displayRow[columns.SR_NO],
-        language, bookNo, bookName, author, ageGroup, category,
+        language, bookNo, bookName, author, ageGroup, category, series,
         status,
         imageUrl:   imageMap[bookNo] || '',
         // Admin-only fields — empty string for non-admin (never reveal who
@@ -3007,6 +3015,106 @@ function ensureBookVisibilityColumn_(sheet, headerRow) {
 // Empty / "Visible" / anything else = shown.
 function isBookHidden_(value) {
   return trim_(value).toLowerCase() === 'hidden';
+}
+
+// Read the Series column index (no create). -1 if the column doesn't exist.
+function getBookSeriesColumn_(sheet, headerRow) {
+  const headerValues = sheet.getRange(headerRow + 1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  return getHeaderIndex_(getHeaderMap_(headerValues), SERIES_HEADER);
+}
+
+// Ensure the Series column exists (create it once if missing) and return its
+// index. Clears cached master reads if a column was added.
+function ensureBookSeriesColumn_(sheet, headerRow) {
+  let idx = getBookSeriesColumn_(sheet, headerRow);
+  if (idx === -1) {
+    sheet.getRange(headerRow + 1, sheet.getLastColumn() + 1).setValue(SERIES_HEADER);
+    idx = getBookSeriesColumn_(sheet, headerRow);
+    REQUEST_CACHE_.masterData = null;
+    REQUEST_CACHE_.masterSheet = null;
+  }
+  return idx;
+}
+
+// Ordered list of (series name -> matcher) rules used to auto-tag books by
+// series/franchise. Matched against the book name first, falling back to the
+// author. First match wins, so more specific patterns should come before more
+// general ones (e.g. a specific Enid Blyton sub-series before the catch-all).
+const SERIES_RULES_ = [
+  { name: 'Franklin',                match: /franklin/i },
+  { name: 'Peppa Pig',                match: /peppa pig/i },
+  { name: 'Horrid Henry',             match: /horrid henry/i },
+  { name: 'Captain Underpants',       match: /captain underpants/i },
+  { name: 'Fantastic Feluda',         match: /fantastic feluda/i },
+  { name: 'Geronimo Stilton',         match: /geronimo/i },
+  { name: 'Diary of a Wimpy Kid',     match: /\bdowk\b|diary of a wimpy kid/i },
+  { name: 'Tom Gates',                match: /tom gates/i },
+  { name: 'Dork Diaries',             match: /dork diar/i },
+  { name: 'Roald Dahl',               match: /roald dahl|\brd-\s*/i },
+  { name: 'Harry and the Dinosaurs',  match: /harry and the dinosou?rs?/i },
+  { name: 'Mr. Men & Little Miss',    match: /\bmr\.?\s*(bump|nonsense|greedy|bounce|busy|good|strong|silly|happy|men\b)|\b(ms|little miss)\s*(chatterbox|summersault|christmas|busy|giggles|trouble|bossy|lucky|late|naughty|contrary)/i },
+  { name: 'Sudha Murthy',             match: /sudha murthy/i },
+  { name: "Princess Evie's Ponies",   match: /princess evie'?s ponies/i },
+  { name: 'Oxford Reading Tree',      match: /oxford reading tree/i },
+  { name: 'Percy Jackson',            match: /percy jackson/i },
+  { name: 'Famous Five',              match: /famous five/i },
+  { name: 'Secret Seven',             match: /secret seven/i },
+  { name: 'Malory Towers',            match: /malory towers/i },
+  { name: 'Enid Blyton',              match: /enid blyton/i },
+  { name: 'Character Building',       match: /character building/i },
+  { name: 'Virtue Stories',           match: /virtue stories/i },
+  { name: 'Thomas & Friends',         match: /thomas and (friends|james)|troublesom trucks|\bcranky\b|\bsir handel\b/i },
+  { name: 'Paw Patrol',               match: /paw patrol/i },
+  { name: 'Jill Murphy',              match: /jill murphy/i },
+  { name: 'Elmer',                    match: /\belmer\b/i },
+  { name: 'Michael Morpurgo',         match: /michael morpurgo/i }
+];
+
+// Guesses a book's series from its name/author using SERIES_RULES_.
+// Returns '' when nothing matches (most books aren't part of a series).
+function guessBookSeries_(bookName, author) {
+  const name = String(bookName || '');
+  const by   = String(author || '');
+  for (let i = 0; i < SERIES_RULES_.length; i++) {
+    const rule = SERIES_RULES_[i];
+    if (rule.match.test(name) || rule.match.test(by)) return rule.name;
+  }
+  return '';
+}
+
+// Admin: one-time (re-runnable) backfill that tags every book with a Series
+// value guessed from its name/author. Never overwrites a cell that already
+// has a value, so manual corrections in the sheet are preserved on re-run.
+function backfillBookSeries(adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
+
+    const { sheet, headerRow, columns } = getSheetAndHeader_();
+    const seriesColumn = ensureBookSeriesColumn_(sheet, headerRow);
+    const values = sheet.getDataRange().getValues();
+
+    let updated = 0;
+    for (let i = headerRow + 1; i < values.length; i++) {
+      const row = values[i];
+      const bookNo = trim_(row[columns.BOOK_NO]);
+      const bookName = trim_(row[columns.BOOK_NAME]);
+      if (!bookNo || !bookName) continue;
+      if (trim_(row[seriesColumn])) continue; // don't clobber existing/manual values
+
+      const guess = guessBookSeries_(bookName, row[columns.AUTHOR]);
+      if (guess) {
+        sheet.getRange(i + 1, seriesColumn + 1).setValue(guess);
+        updated++;
+      }
+    }
+
+    REQUEST_CACHE_.masterData = null;
+    REQUEST_CACHE_.masterSheet = null;
+    invalidatePublicBooksCache_();
+    return { success: true, message: `✅ Series backfill complete. Tagged ${updated} book(s).`, updated };
+  } catch (err) {
+    return reportError_('backfillBookSeries', err, adminCredential);
+  }
 }
 
 function clearBookReservationLink_(bookNo, reservationId) {
