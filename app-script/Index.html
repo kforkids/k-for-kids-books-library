@@ -394,23 +394,6 @@
     font-weight: 600;
     margin-top: 4px;
   }
-  /* Review link inside the hover overlay — the only clickable line in an
-     otherwise pointer-events:none overlay, so it needs its own pointer-events
-     opt-in. stopPropagation on click (see hoverReviewLinkClick_) keeps a tap
-     here from also opening the detail modal via the card's delegated handler. */
-  .hover-review-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-size: .68rem;
-    font-weight: 700;
-    color: #bfe0ff;
-    text-decoration: underline;
-    margin-top: 5px;
-    text-shadow: 0 1px 3px rgba(0,0,0,.7);
-    pointer-events: auto;
-  }
-
   /* ── Quick-action icons beside the title (always visible, tinted circles) ── */
   .card-actions {
     display: flex;
@@ -436,10 +419,6 @@
   .card-action.ca-warning { color: #e65100; background: #fff3e0; }
   .card-action.ca-primary { color: #1565c0; background: #e3f2fd; }
   .card-action.ca-muted   { color: #555;    background: #eceff1; }
-  .card-action.ca-info    { color: #185fa5; background: #e6f1fb; }
-  /* .card-action is a <button> by default; the review link reuses the same
-     look on an <a>, so it needs the button's box model explicitly. */
-  a.card-action { text-decoration: none; }
 
   /* ── Modal overrides ── */
   .modal-content { border: none; border-radius: 16px; overflow: hidden; }
@@ -524,17 +503,6 @@
   }
   .book-detail-facts dt { color: #888; font-weight: 600; }
   .book-detail-facts dd { margin: 0; color: #222; }
-  .review-link {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: .85rem;
-    font-weight: 600;
-    color: #185fa5;
-    text-decoration: none;
-    margin-top: 10px;
-  }
-  .review-link:hover { text-decoration: underline; }
   @media (max-width: 700px) {
     /* Goal on phones: the whole book modal — cover, details AND the action
        buttons — fits on screen with NO scrolling. We shrink the cover, fonts and
@@ -1733,12 +1701,6 @@ document.addEventListener('DOMContentLoaded', () => {
     .forEach(el => stickyObserver.observe(el));
 
   document.getElementById('booksGrid').addEventListener('click', event => {
-    // The review link is a real <a> to an external site — let it navigate
-    // normally, just don't also open the detail modal underneath it.
-    if (event.target.closest('.card-action-link')) {
-      event.stopPropagation();
-      return;
-    }
     // A quick-action icon takes precedence over opening the detail modal.
     const actionBtn = event.target.closest('.card-action');
     if (actionBtn) {
@@ -1992,17 +1954,8 @@ function bookCardHtml(book) {
   if (book.ageGroup) detailRows.push(`<div class="hover-facts">${escHtml(formatAgeGroup(book.ageGroup))}</div>`);
   if (adminMode)     detailRows.push(`<div class="hover-facts hover-code">${escHtml(book.bookNo)}</div>`);
   if (adminMode && book.issuedTo) detailRows.push(`<div class="hover-issued"><i class="bi bi-person me-1"></i>${escHtml(book.issuedTo)}</div>`);
-  // Review link is available to everyone (no login required), so it lives in
-  // the hover overlay rather than the action row — anonymous cards have no
-  // action row at all. stopPropagation on click keeps it from also opening
-  // the detail modal via the grid's delegated handler.
-  const reviewLink = `<a class="hover-review-link" href="${escAttr(googleBooksSearchUrl(book))}"
-       target="_blank" rel="noopener" onclick="event.stopPropagation()">
-       <i class="bi bi-search"></i>Find reviews on Google Books
-     </a>`;
   const hoverOverlay = `<div class="book-hover">
       ${detailRows.join('')}
-      ${reviewLink}
       <div class="book-hover-tap"><i class="bi bi-arrows-fullscreen me-1"></i>Tap for details</div>
     </div>`;
 
@@ -2035,14 +1988,6 @@ function cardActionsHtml(book) {
              data-book-no="${escAttr(book.bookNo)}" title="${label}" aria-label="${label}">
        <i class="bi ${icon}"></i>
      </button>`;
-  // Review link: same tinted-circle look as a card-action, but a real <a> to
-  // an external site rather than a server action — card-action-link (not
-  // card-action) so the delegated grid click handler lets it navigate
-  // normally instead of routing it through runCardAction.
-  const reviewLinkBtn = `<a class="card-action card-action-link ca-info" href="${escAttr(googleBooksSearchUrl(book))}"
-       target="_blank" rel="noopener" title="Find reviews" aria-label="Find reviews on Google Books">
-       <i class="bi bi-search"></i>
-     </a>`;
 
   if (adminMode) {
     if (book.status === 'Available' || book.status === 'Reserved') btns.push(btn('issue', 'bi-person-check', 'Mark as issued', 'ca-warning'));
@@ -2051,7 +1996,6 @@ function cardActionsHtml(book) {
     btns.push(book.hidden
       ? btn('show', 'bi-eye', 'Show to users', 'ca-primary')
       : btn('hide', 'bi-eye-slash', 'Hide from users', 'ca-muted'));
-    btns.push(reviewLinkBtn);
   } else if (currentCustomer) {
     // Logged-in customer quick actions.
     if (book.status === 'Reserved' && book.isMyReservation) {
@@ -2059,7 +2003,6 @@ function cardActionsHtml(book) {
     } else if (book.status === 'Available' && isCustomerActive()) {
       btns.push(btn('reserve', 'bi-bookmark-plus', 'Reserve', 'ca-success'));
     }
-    btns.push(reviewLinkBtn);
   }
 
   if (!btns.length) return '';
@@ -2286,9 +2229,6 @@ function openBookDetail(bookNo) {
           ${book.ageGroup ? `<dt>Age group</dt><dd>${escHtml(formatAgeGroup(book.ageGroup))}</dd>` : ''}
           <dt>Book no.</dt><dd>${escHtml(book.bookNo)}</dd>
         </dl>
-        <a class="review-link" href="${escAttr(googleBooksSearchUrl(book))}" target="_blank" rel="noopener">
-          <i class="bi bi-search"></i>Find reviews on Google Books<i class="bi bi-box-arrow-up-right" style="font-size:.7rem"></i>
-        </a>
       </div>
     </div>
     ${buildAdminSection(book)}
@@ -3715,15 +3655,6 @@ function formatLanguageLabel(language) {
   const native = LANGUAGE_NATIVE_NAMES[value.toLowerCase()];
   if (native) return native;
   return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-// Google Books search link for a book — used by both the card hover overlay
-// (anonymous-friendly, no login required) and the detail modal. Searches by
-// title + author rather than a direct volume lookup since Books-DB has no
-// ISBN field to look up an exact edition.
-function googleBooksSearchUrl(book) {
-  const query = [book.bookName, book.author].filter(Boolean).join(' ');
-  return 'https://www.google.com/search?tbm=bks&q=' + encodeURIComponent(query);
 }
 
 function formatAgeGroup(ageGroup) {
