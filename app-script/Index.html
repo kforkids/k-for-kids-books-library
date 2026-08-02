@@ -261,10 +261,12 @@
   .book-img-wrap:has(.lang-badge) .hidden-badge { top: 32px; }
   .book-card.is-hidden-admin { outline: 2px dashed #9e9e9e; outline-offset: -2px; }
 
-  /* Customer "Read before" marker — top-left. Never shown alongside the admin
-     hidden badge (mutually exclusive: read-badge requires !adminMode), and the
-     bottom is now reserved for the on-cover title. Stacks below the language
-     badge for the same reason as hidden-badge above. */
+  /* Customer "Read before" marker — top-left by default (top-right, stacked
+     below the status badge, when one is showing — see rule below). Never
+     shown alongside the admin hidden badge (mutually exclusive: read-badge
+     requires !adminMode), and the bottom is now reserved for the on-cover
+     title. Stacks below the language badge for the same reason as
+     hidden-badge above. */
   .read-badge {
     position: absolute;
     top: 7px; left: 7px;
@@ -285,11 +287,6 @@
      label may truncate, so there's no room to share a row. */
   .book-img-wrap:has(.status-badge) .read-badge {
     top: 32px; left: auto; right: 7px;
-  }
-  /* Both a language badge above it AND a status badge sharing its column: push
-     read-badge down one more slot so it doesn't overlap the language badge. */
-  .book-img-wrap:has(.lang-badge):has(.status-badge) .read-badge {
-    top: 57px;
   }
 
   /* ── Optimistic "saving…" overlay on a card ── */
