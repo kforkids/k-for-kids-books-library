@@ -1742,26 +1742,55 @@ document.addEventListener('DOMContentLoaded', () => {
   // this tab sits open. Without this, a customer only ever sees changes made
   // after they logged in — everything else looks "stuck" until they log out
   // and back in. Throttled so rapid tab-switching doesn't spam the server.
+  // Both calls are silent — no loading spinner, and the grid only repaints if
+  // the fetched data actually differs from what's on screen — so coming back
+  // to the tab doesn't look like the whole page reloaded.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
     if (Date.now() - lastFocusRefreshAt_ < FOCUS_REFRESH_MIN_INTERVAL_MS) return;
     lastFocusRefreshAt_ = Date.now();
-    loadBooks();
-    if (customerToken && currentCustomer) loadMyReadBooks();
+    loadBooks(true);
+    if (customerToken && currentCustomer) loadMyReadBooks(true);
   });
 });
 
-function loadBooks() {
-  showLoading(true);
+// `silent`: skip the full-page loading state and, if the data hasn't actually
+// changed, skip re-rendering too. Used by the tab-focus refresh so coming
+// back to the tab doesn't look like the whole page reloaded — the grid only
+// repaints when a book's status/reservation/etc. genuinely changed elsewhere.
+function loadBooks(silent) {
+  if (!silent) showLoading(true);
   google.script.run
-    .withSuccessHandler(onBooksLoaded)
-    .withFailureHandler(onError)
+    .withSuccessHandler(result => onBooksLoaded(result, silent))
+    .withFailureHandler(err => { if (!silent) onError(err); })
     .getBooks(null, adminToken, customerToken);
 }
 
-function onBooksLoaded(result) {
-  showLoading(false);
+// Fields that affect what's rendered on a card or in the detail modal. Only
+// these are compared to decide whether a silent refresh needs to repaint —
+// anything else changing (e.g. field order) shouldn't trigger a re-render.
+const BOOK_DIFF_FIELDS = [
+  'status', 'issuedTo', 'reservedBy', 'reservedAt', 'reservationUpdatedAt',
+  'reservationId', 'reservedCustomerId', 'isMyReservation', 'isMyIssue',
+  'dueDate', 'overdue', 'hidden', 'imageUrl', 'bookName', 'author',
+  'category', 'language', 'ageGroup',
+];
+
+function booksDiffer_(prevBooks, nextBooks) {
+  if (prevBooks.length !== nextBooks.length) return true;
+  const prevByKey = new Map(prevBooks.map(b => [b.bookNo, b]));
+  for (const next of nextBooks) {
+    const prev = prevByKey.get(next.bookNo);
+    if (!prev) return true;
+    if (BOOK_DIFF_FIELDS.some(f => String(prev[f] ?? '') !== String(next[f] ?? ''))) return true;
+  }
+  return false;
+}
+
+function onBooksLoaded(result, silent) {
+  if (!silent) showLoading(false);
   if (!result.success) {
+    if (silent) return; // don't surface transient background-refresh errors
     const msg = result.error || 'Failed to load books.';
     // Admin gets the real (detailed) error in a persistent banner so config /
     // sheet problems are diagnosable; regular users get a brief toast.
@@ -1769,8 +1798,12 @@ function onBooksLoaded(result) {
     else showToast(msg, 'danger');
     return;
   }
-  allBooks = result.books || [];
-  allBooks.sort((a, b) => (b.imageUrl ? 1 : 0) - (a.imageUrl ? 1 : 0));
+  const nextBooks = result.books || [];
+  nextBooks.sort((a, b) => (b.imageUrl ? 1 : 0) - (a.imageUrl ? 1 : 0));
+
+  if (silent && !booksDiffer_(allBooks, nextBooks)) return; // nothing changed — skip the repaint
+
+  allBooks = nextBooks;
   // Anonymous visitors get a capped preview; remember the total so the CTA can
   // say how many more books they'd unlock by logging in / registering.
   previewCapped    = Boolean(result.capped);
@@ -3470,15 +3503,21 @@ function readDatePart_(ts) {
 // customer). Populates myReadBooks/myReadHistory, then re-renders so the
 // "read before" badge, count, and recently-read section reflect it. Best-effort:
 // a failure just leaves the history empty — it never blocks book browsing.
-function loadMyReadBooks() {
+// `silent`: skip the grid repaint when the read-books set hasn't actually
+// changed, so a background tab-focus refresh doesn't visibly repaint the
+// whole grid just to confirm nothing's different.
+function loadMyReadBooks(silent) {
   if (!customerToken || !currentCustomer) return;
   google.script.run
     .withSuccessHandler(res => {
       if (res && res.success) {
-        myReadBooks = new Set((res.readBookNos || []).map(String));
+        const nextReadBooks = new Set((res.readBookNos || []).map(String));
+        const changed = !silent || nextReadBooks.size !== myReadBooks.size ||
+          [...nextReadBooks].some(no => !myReadBooks.has(no));
+        myReadBooks = nextReadBooks;
         myReadHistory = res.history || [];
         updateStats();
-        if (allBooks.length) renderGrid();
+        if (changed && allBooks.length) renderGrid();
       }
     })
     .withFailureHandler(() => { /* non-fatal — leave history empty */ })
