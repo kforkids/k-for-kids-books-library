@@ -1172,7 +1172,7 @@
             <label class="form-label" for="registerPassword">Create Password</label>
             <div class="input-group">
               <input type="password" id="registerPassword" class="form-control" autocomplete="new-password"
-                     onkeydown="if(event.key==='Enter') selfSignupCustomer()">
+                     oninput="clearAuthError_()" onkeydown="if(event.key==='Enter') selfSignupCustomer()">
               <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('registerPassword', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
             </div>
             <div class="form-text">Use at least 8 characters.</div>
@@ -1181,7 +1181,7 @@
             <label class="form-label" for="registerPasswordConfirm">Re-enter Password</label>
             <div class="input-group">
               <input type="password" id="registerPasswordConfirm" class="form-control" autocomplete="new-password"
-                     onkeydown="if(event.key==='Enter') selfSignupCustomer()">
+                     oninput="clearAuthError_()" onkeydown="if(event.key==='Enter') selfSignupCustomer()">
               <button type="button" class="btn btn-outline-secondary" onclick="togglePasswordVisibility('registerPasswordConfirm', this)" aria-label="Show password" tabindex="-1"><i class="bi bi-eye"></i></button>
             </div>
           </div>
