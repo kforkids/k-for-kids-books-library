@@ -992,16 +992,6 @@
     <div class="spinner-border spinner-border-sm text-secondary" role="status"></div>
   </div>
 
-  <!-- Customer-only: a strip of the books they've most recently returned. Shown
-       below the main grid in the default (unfiltered) view. Populated by JS. -->
-  <div id="recentlyReadSection" style="display:none" class="mt-4">
-    <div class="d-flex align-items-center justify-content-between mb-2">
-      <h6 class="mb-0 fw-bold"><i class="bi bi-book me-1" style="color:#185fa5"></i>Recently read by you</h6>
-      <a href="#" class="small" onclick="toggleMineFilter('read'); return false;">See all</a>
-    </div>
-    <div class="books-grid" id="recentlyReadGrid"></div>
-  </div>
-
   <!-- Anonymous preview CTA: shown only to non-logged-in visitors when the
        catalog is capped. Makes "log in or register to see all books" prominent. -->
   <div id="previewCta" style="display:none">
@@ -1979,38 +1969,6 @@ function renderGrid() {
   empty.style.display = 'none';
   appendBooks();
   renderPreviewCta();
-  renderRecentlyRead();
-}
-
-// Below the grid: up to 6 books the customer most recently returned. Shown only
-// in the default view (no active mine/status/search/etc. filter) so it doesn't
-// clutter a filtered result. Cards reuse the loaded book objects when present.
-const RECENTLY_READ_COUNT = 6;
-function renderRecentlyRead() {
-  const section = document.getElementById('recentlyReadSection');
-  const grid = document.getElementById('recentlyReadGrid');
-  if (!section || !grid) return;
-
-  const noFilterActive = !filters.mine && !filters.status && !filters.search &&
-    !filters.language && !filters.ageGroup && !filters.withImage && !filters.noImage;
-  const show = !adminMode && currentCustomer && myReadHistory.length > 0 && noFilterActive;
-  if (!show) { section.style.display = 'none'; grid.innerHTML = ''; return; }
-
-  const cards = myReadHistory.slice(0, RECENTLY_READ_COUNT).map(h => {
-    const loaded = allBooks.find(b => String(b.bookNo) === String(h.bookNo));
-    if (loaded) return bookCardHtml(loaded);
-    // Fallback minimal card if the book isn't in the currently loaded list.
-    return `<div class="book-card">
-        <div class="book-img-wrap">
-          <div class="book-img-placeholder"><i class="bi bi-book"></i><small>${escHtml(h.bookNo)}</small></div>
-          <span class="read-badge" title="Read before"><i class="bi bi-check2 me-1"></i>Read</span>
-        </div>
-        <div class="book-info"><div class="book-title">${escHtml(h.bookName || 'Book ' + h.bookNo)}</div></div>
-      </div>`;
-  }).join('');
-
-  grid.innerHTML = cards;
-  section.style.display = '';
 }
 
 // Show the "log in / register to see all books" call-to-action to anonymous
@@ -3190,10 +3148,9 @@ function doLogin() {
         showAdminUi_();
         customerAuthModal.hide();
         renderCustomerState();
-        // Refresh immediately in case a customer session's stats/recently-read
-        // were still showing — otherwise they'd linger until loadBooks() resolves.
+        // Refresh immediately in case a customer session's stats were still
+        // showing — otherwise they'd linger until loadBooks() resolves.
         updateStats();
-        renderRecentlyRead();
         showToast('Admin mode active.', 'success');
         loadBooks();
       } else {
@@ -3292,7 +3249,6 @@ function handleCustomerAuthResponse(res) {
     customerAuthModal.hide();
     renderCustomerState();
     updateStats();
-    renderRecentlyRead();
     loadBooks();
     loadMyReadBooks();
     showToast(res.message || 'Logged in.', 'success');
@@ -3423,12 +3379,11 @@ function clearCustomerSession() {
   localStorage.removeItem('kfkCustomerToken');
   writeCachedCustomer_(null);
   renderCustomerState();
-  // Hide customer-only UI (stats "read before" count, "Recently read by you")
-  // immediately instead of leaving stale data on screen until the next
-  // loadBooks() round-trip completes — that gap was visible as "logged out"
-  // toast + still-showing read history for however long the reload took.
+  // Hide customer-only UI (stats "read before" count) immediately instead of
+  // leaving stale data on screen until the next loadBooks() round-trip
+  // completes — that gap was visible as "logged out" toast + still-showing
+  // read history for however long the reload took.
   updateStats();
-  renderRecentlyRead();
 }
 
 // The Activity-Log timestamp is "dd/MM/yyyy HH:mm:ss" (IST). For display we

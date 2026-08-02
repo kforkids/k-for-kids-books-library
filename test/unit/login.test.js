@@ -2,12 +2,12 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { loadIndexHtmlScript, fakeDocument } from '../support/loadGasSource.js';
 
 // Regression (mirror of logout.test.js, opposite direction): logging in as a
-// NEW customer while a PREVIOUS customer's stats/recently-read data was still
-// on screen used to leave that stale data visible — attributed to the wrong
-// person — until loadMyReadBooks()'s server round-trip resolved. Now
+// NEW customer while a PREVIOUS customer's stats data was still on screen
+// used to leave that stale data visible — attributed to the wrong person —
+// until loadMyReadBooks()'s server round-trip resolved. Now
 // handleCustomerAuthResponse (and the admin-login branch of doLogin) reset
-// myReadBooks/myReadHistory and re-render the stats strip + recently-read
-// section immediately on a successful login response.
+// myReadBooks/myReadHistory and re-render the stats strip immediately on a
+// successful login response.
 function buildDocument() {
   const doc = fakeDocument();
   doc.__withClasses('statTotalLink', 'stat-admin', 'stat-link');
@@ -48,11 +48,9 @@ describe('handleCustomerAuthResponse — fresh login clears the PREVIOUS session
       allBooks = [{ bookNo: 'M0001', bookName: 'Franklin chi christmas bhet', status: 'Available', language: 'marathi', ageGroup: '3-7', author: '', category: '' }];
     `);
     app.updateStats();
-    app.renderRecentlyRead();
   });
 
   it('sanity check: the old customer\'s data is visible before the new login', () => {
-    expect(document_.getElementById('recentlyReadSection').style.display).toBe('');
     expect(app.run('myReadBooks.size')).toBe(1);
   });
 
@@ -65,16 +63,6 @@ describe('handleCustomerAuthResponse — fresh login clears the PREVIOUS session
     });
     expect(app.run('myReadBooks.size')).toBe(0);
     expect(app.run('myReadHistory.length')).toBe(0);
-  });
-
-  it('hides the "Recently read by you" section immediately (the new customer has no history yet)', () => {
-    app.handleCustomerAuthResponse({
-      success: true,
-      token: 'new-token',
-      customer: { customerId: 'C_NEW', name: 'Test One', accountStatus: 'Active' },
-      message: 'Logged in successfully.'
-    });
-    expect(document_.getElementById('recentlyReadSection').style.display).toBe('none');
   });
 
   it('does not touch session state on a failed login response', () => {
