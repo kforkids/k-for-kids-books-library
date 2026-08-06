@@ -91,11 +91,12 @@
   }
   .filter-btn.active { background: var(--brand); color: #fff; border-color: var(--brand); }
 
-  /* "More filters" toggle + the secondary filter group it reveals. On desktop
+  /* "More filters" toggle + the filter group it reveals (all dropdowns/toggle
+     buttons — Language, Age, Status, Series, image filters). On desktop
      everything fits on one row already, so the toggle stays hidden and the
-     secondary group is just part of the normal flex-wrap flow (matches
-     .filter-bar's own display/gap so it's visually indistinguishable from
-     the primary fields). */
+     group is just part of the normal flex-wrap flow (matches .filter-bar's
+     own display/gap so it's visually indistinguishable from Search). On
+     mobile only Search shows by default; tapping the toggle reveals the rest. */
   .more-filters-toggle { display: none; }
   .filter-bar-secondary {
     display: contents;
@@ -954,41 +955,41 @@
       </div>
     </div>
 
-    <label class="filter-field">
-      <span class="filter-label">Language</span>
-      <select id="filterLanguage" class="form-select form-select-sm" onchange="onFilterChange('language', this.value)">
-        <option value="">All</option>
-        <option value="marathi">Marathi</option>
-        <option value="english">English</option>
-      </select>
-    </label>
-
-    <label class="filter-field">
-      <span class="filter-label">Age</span>
-      <select id="filterAge" class="form-select form-select-sm" onchange="onFilterChange('ageGroup', this.value)">
-        <option value="">All</option>
-      </select>
-    </label>
-
-    <label class="filter-field" id="statusFilterField">
-      <span class="filter-label">Status</span>
-      <select id="filterStatus" class="form-select form-select-sm" onchange="onFilterChange('status', this.value)">
-        <option value="">All</option>
-        <option value="available">Available</option>
-        <option value="reserved">Reserved</option>
-        <option value="issued">Issued</option>
-      </select>
-    </label>
-
-    <!-- Mobile-only toggle for the secondary filters below (Series, image
-         toggles). Keeps the primary mobile row to Language/Age/Status so the
-         book grid isn't pushed further down the screen. Hidden on desktop,
-         where everything already fits on one row. -->
+    <!-- Mobile-only toggle for all the filter fields below (Language, Age,
+         Status, Series, image toggles). On mobile, only Search shows by
+         default; tapping this reveals every filter. Hidden on desktop, where
+         everything already fits on one row and just shows inline. -->
     <button class="filter-btn more-filters-toggle" id="moreFiltersToggle" onclick="toggleMoreFilters_()">
       <i class="bi bi-sliders me-1"></i>More filters <i class="bi bi-chevron-down" id="moreFiltersChevron"></i>
     </button>
 
     <div class="filter-bar-secondary" id="filterBarSecondary">
+      <label class="filter-field">
+        <span class="filter-label">Language</span>
+        <select id="filterLanguage" class="form-select form-select-sm" onchange="onFilterChange('language', this.value)">
+          <option value="">All</option>
+          <option value="marathi">Marathi</option>
+          <option value="english">English</option>
+        </select>
+      </label>
+
+      <label class="filter-field">
+        <span class="filter-label">Age</span>
+        <select id="filterAge" class="form-select form-select-sm" onchange="onFilterChange('ageGroup', this.value)">
+          <option value="">All</option>
+        </select>
+      </label>
+
+      <label class="filter-field" id="statusFilterField">
+        <span class="filter-label">Status</span>
+        <select id="filterStatus" class="form-select form-select-sm" onchange="onFilterChange('status', this.value)">
+          <option value="">All</option>
+          <option value="available">Available</option>
+          <option value="reserved">Reserved</option>
+          <option value="issued">Issued</option>
+        </select>
+      </label>
+
       <label class="filter-field" id="seriesFilterField" style="display:none">
         <span class="filter-label">Series</span>
         <select id="filterSeries" class="form-select form-select-sm" onchange="onFilterChange('series', this.value)">
