@@ -97,26 +97,39 @@
      group is just part of the normal flex-wrap flow (matches .filter-bar's
      own display/gap so it's visually indistinguishable from Search). On
      mobile only Search shows by default; tapping the toggle reveals the rest. */
-  .more-filters-toggle { display: none; }
   .filter-bar-secondary {
     display: contents;
+  }
+
+  /* Mobile-only: fused onto the end of the search input-group as its own
+     segment (button, not a plain span, so it's tappable) instead of a
+     separate pill/row. Hidden on desktop via display:none below. */
+  .more-filters-toggle {
+    display: none;
+    cursor: pointer;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  /* Tints green whenever at least one filter is currently applied, so
+     collapsing the panel doesn't silently hide that a filter is on. */
+  .more-filters-toggle.active {
+    background: var(--brand-lt);
+    color: var(--brand);
+    border-color: var(--brand);
   }
 
   @media (max-width: 480px) {
     .filter-field { flex: 1 1 45%; }
     .filter-field .form-select { min-width: 0; width: 100%; }
 
-    .more-filters-toggle {
-      display: inline-flex;
-      align-items: center;
-      flex: 1 1 100%;
-    }
+    .more-filters-toggle { display: flex; }
+
     /* Collapsed by default on mobile; JS toggles this to reveal the group. */
     .filter-bar-secondary {
       display: none;
       flex: 1 1 100%;
       flex-wrap: wrap;
       gap: 10px;
+      margin-top: 10px;
     }
     .filter-bar-secondary.expanded { display: flex; }
   }
@@ -952,16 +965,17 @@
         <button class="btn btn-outline-secondary" onclick="clearSearch()" title="Clear">
           <i class="bi bi-x"></i>
         </button>
+        <!-- Mobile-only: fused onto the end of the search bar as its own
+             input-group segment (not a separate row) so filters cost no
+             extra vertical space. Tints green (.active) when at least one
+             filter — Language/Age/Status/Series — is currently applied, so
+             collapsing the panel doesn't silently hide that a filter is on.
+             Hidden on desktop, where every filter already shows inline. -->
+        <button class="input-group-text more-filters-toggle" id="moreFiltersToggle" onclick="toggleMoreFilters_()" title="More filters">
+          <i class="bi bi-sliders" id="moreFiltersIcon"></i>
+        </button>
       </div>
     </div>
-
-    <!-- Mobile-only toggle for all the filter fields below (Language, Age,
-         Status, Series, image toggles). On mobile, only Search shows by
-         default; tapping this reveals every filter. Hidden on desktop, where
-         everything already fits on one row and just shows inline. -->
-    <button class="filter-btn more-filters-toggle" id="moreFiltersToggle" onclick="toggleMoreFilters_()">
-      <i class="bi bi-sliders me-1"></i>More filters <i class="bi bi-chevron-down" id="moreFiltersChevron"></i>
-    </button>
 
     <div class="filter-bar-secondary" id="filterBarSecondary">
       <label class="filter-field">
@@ -1886,6 +1900,7 @@ function applyFilters() {
 
   renderGrid();
   updateStats();
+  syncMoreFiltersIndicator_();
 }
 
 // Dropdown change → set the filter and apply immediately (no apply button).
@@ -1908,15 +1923,27 @@ function clearSearch() {
   applyFilters();
 }
 
-// Mobile-only: show/hide the secondary filter group (Series, image toggles)
-// tucked behind "More filters". No-op on desktop, where that group is always
-// visible inline (the button itself is hidden there via CSS).
+// Mobile-only: show/hide the secondary filter group (Language, Age, Status,
+// Series, image toggles) tucked behind the sliders icon fused onto the search
+// bar. No-op on desktop, where that group is always visible inline (the
+// button itself is hidden there via CSS).
 function toggleMoreFilters_() {
   const group = document.getElementById('filterBarSecondary');
-  const chevron = document.getElementById('moreFiltersChevron');
   if (!group) return;
-  const expanded = group.classList.toggle('expanded');
-  if (chevron) chevron.className = expanded ? 'bi bi-chevron-up' : 'bi bi-chevron-down';
+  group.classList.toggle('expanded');
+}
+
+// Tints the sliders icon green whenever at least one filter is currently
+// applied, so collapsing the panel on mobile doesn't silently hide that a
+// filter is on. Search itself doesn't count — it has its own visible text.
+function syncMoreFiltersIndicator_() {
+  const btn = document.getElementById('moreFiltersToggle');
+  if (!btn) return;
+  const active = Boolean(
+    filters.language || filters.ageGroup || filters.series || filters.status ||
+    filters.withImage || filters.noImage
+  );
+  btn.classList.toggle('active', active);
 }
 
 // "Has image" is a toggle pill (not a dropdown); flip it and apply. "Has image"
