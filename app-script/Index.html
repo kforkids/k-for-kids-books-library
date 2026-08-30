@@ -894,6 +894,9 @@
   .activity-badge.returned  { background: #f0efe8; color: #666; }
   .activity-badge.cancelled { background: #fbeae7; color: #9a3b2e; }
 
+  .activity-row-actions { display: flex; gap: 6px; flex: none; }
+  .activity-row-actions .btn { padding: 3px 9px; font-size: .72rem; }
+
   /* ── One-shot confetti burst over a card's cover on a successful reserve ── */
   .confetti-layer {
     position: absolute;
@@ -1228,6 +1231,34 @@
 
 <!-- ══════════════ ACTIVITY LOG PANEL ══════════════ -->
 <div id="activityPanel" style="display:none">
+  <div class="panel-card">
+    <div class="panel-card-header">
+      <h6><i class="bi bi-bookmark-star me-2"></i>Currently active</h6>
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" id="activeSearch" class="form-control form-control-sm" placeholder="Search book or customer…"
+               style="max-width:200px" oninput="renderCurrentlyActive_()">
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadCurrentlyActive_()">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+    </div>
+    <div class="panel-card-body">
+      <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Currently active view">
+        <button type="button" class="btn btn-outline-secondary active" id="activeViewReserved"
+                onclick="setActiveView_('reserved')">Reserved</button>
+        <button type="button" class="btn btn-outline-secondary" id="activeViewIssued"
+                onclick="setActiveView_('issued')">Issued</button>
+      </div>
+      <div id="activeLoadingState" class="text-center py-4 text-muted" style="display:none">
+        <div class="spinner-border spinner-border-sm me-2"></div>Loading…
+      </div>
+      <div id="activeEmptyState" class="text-center py-4 text-muted" style="display:none">
+        <i class="bi bi-bookmark-star d-block mb-2" style="font-size:2rem"></i>Nothing here.
+      </div>
+      <div id="activeRows"></div>
+    </div>
+  </div>
+
   <div class="panel-card">
     <div class="panel-card-header">
       <h6><i class="bi bi-clock-history me-2"></i>Activity log</h6>
@@ -1954,6 +1985,10 @@ function applyFilters() {
   renderGrid();
   updateStats();
   syncMoreFiltersIndicator_();
+  // allBooks just changed — if the admin is looking at "Currently active" in
+  // the Activity log tab, keep it in sync (e.g. right after an issue/return
+  // action run from one of its own rows).
+  if (activeAdminTab === 'activity') renderCurrentlyActive_();
 }
 
 // Dropdown change → set the filter and apply immediately (no apply button).
@@ -4126,6 +4161,7 @@ function switchAdminTab(tab) {
 
   if (tab === 'customers' && allCustomers.length === 0) loadCustomers();
   if (tab === 'activity'  && activityReservations.length === 0 && activityLoans.length === 0) loadActivityLog();
+  if (tab === 'activity') loadCurrentlyActive_();
 }
 
 // ════════════════════════════════════════════════
@@ -4595,6 +4631,92 @@ function renderLoanRow_(t) {
       <div class="activity-row-sub">${sub}</div>
     </div>
     <div class="activity-badge ${badgeClass}">${escHtml(badgeLabel)}</div>
+  </div>`;
+}
+
+// ════════════════════════════════════════════════
+// Activity log — currently active (live book state)
+// ════════════════════════════════════════════════
+// Unlike the history above (derived from the Activity-Log sheet), "currently
+// active" reflects the live Books sheet right now — the same data and the
+// same admin actions (issueBook / cancelReservation / returnBook) as the
+// Books tab's own card buttons, just listed instead of shown as a grid.
+let activeView = 'reserved'; // 'reserved' | 'issued'
+
+function loadCurrentlyActive_() {
+  document.getElementById('activeLoadingState').style.display = allBooks.length ? 'none' : '';
+  loadBooks(true); // silent: populates allBooks without the main-page loader
+  renderCurrentlyActive_();
+}
+
+function setActiveView_(view) {
+  activeView = view;
+  document.getElementById('activeViewReserved').classList.toggle('active', view === 'reserved');
+  document.getElementById('activeViewIssued').classList.toggle('active', view === 'issued');
+  renderCurrentlyActive_();
+}
+
+function renderCurrentlyActive_() {
+  document.getElementById('activeLoadingState').style.display = 'none';
+  const q = document.getElementById('activeSearch').value.trim().toLowerCase();
+  const wantStatus = activeView === 'issued' ? 'Issued' : 'Reserved';
+  const books = allBooks
+    .filter(b => b.status === wantStatus)
+    .filter(b => !q ||
+      (b.bookName || '').toLowerCase().includes(q) ||
+      (b.bookNo   || '').toLowerCase().includes(q) ||
+      (activeView === 'issued' ? (b.issuedTo || '') : (b.reservedBy || '')).toLowerCase().includes(q))
+    .sort((a, b) => (a.bookName || '').localeCompare(b.bookName || ''));
+
+  const empty = document.getElementById('activeEmptyState');
+  const container = document.getElementById('activeRows');
+
+  if (!books.length) {
+    container.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+  container.innerHTML = books.map(b => activeView === 'issued' ? renderActiveIssuedRow_(b) : renderActiveReservedRow_(b)).join('');
+}
+
+function renderActiveReservedRow_(b) {
+  let sub = escHtml(b.reservedBy || 'Unknown customer');
+  if (b.reservedAt) sub += ' &middot; reserved ' + escHtml(b.reservedAt);
+
+  return `<div class="activity-row">
+    <div class="activity-dot reserved"></div>
+    <div class="activity-row-main">
+      <div class="activity-row-title">${escHtml(b.bookName || 'Unknown book')} <span class="activity-bookno">&middot; ${escHtml(b.bookNo)}</span></div>
+      <div class="activity-row-sub">${sub}</div>
+    </div>
+    <div class="activity-row-actions">
+      <button type="button" class="btn btn-warning" onclick="runCardAction('issue', '${escAttr(b.bookNo)}')">
+        <i class="bi bi-person-check me-1"></i>Issue
+      </button>
+      <button type="button" class="btn btn-outline-danger" onclick="runCardAction('cancelReservation', '${escAttr(b.bookNo)}')">
+        <i class="bi bi-x-circle me-1"></i>Cancel
+      </button>
+    </div>
+  </div>`;
+}
+
+function renderActiveIssuedRow_(b) {
+  let sub = escHtml(b.issuedTo || 'Unknown customer');
+  if (b.issuedAt) sub += ' &middot; issued ' + escHtml(b.issuedAt);
+  if (b.dueDate)  sub += ' &middot; due ' + escHtml(b.dueDate) + (b.overdue ? ' <span class="text-danger fw-bold">(overdue)</span>' : '');
+
+  return `<div class="activity-row">
+    <div class="activity-dot issued"></div>
+    <div class="activity-row-main">
+      <div class="activity-row-title">${escHtml(b.bookName || 'Unknown book')} <span class="activity-bookno">&middot; ${escHtml(b.bookNo)}</span></div>
+      <div class="activity-row-sub">${sub}</div>
+    </div>
+    <div class="activity-row-actions">
+      <button type="button" class="btn btn-outline-success" onclick="runCardAction('returnBook', '${escAttr(b.bookNo)}')">
+        <i class="bi bi-arrow-return-left me-1"></i>Return
+      </button>
+    </div>
   </div>`;
 }
 </script>
