@@ -2477,6 +2477,147 @@ function logActivity_(event, bookNo, bookName, customerId, customerName, actor, 
   }
 }
 
+// ════════════════════════════════════════════════
+// Activity log — admin read view
+// ════════════════════════════════════════════════
+//
+// The Activity-Log sheet stays a flat, append-only history (see logActivity_
+// above) — this function never writes to it. It only reads the rows and pairs
+// them into "threads" so the admin UI can show one row per real-world event
+// (a reservation and its eventual outcome; a loan and its return) instead of
+// the raw stream of individual log lines.
+
+/**
+ * Returns the Activity-Log, paired into reservation threads and loan threads.
+ *
+ * A reservation thread starts at a RESERVED row and, if a later row shares its
+ * Reservation ID, ends at that row (UNRESERVED, RESERVATION_CANCELLED, or
+ * ISSUED — a reservation converted into a loan). A loan thread starts at an
+ * ISSUED row and ends at the next RETURNED row for the same book + customer.
+ * Unmatched rows (e.g. a cancellation with no reservation ID on record) are
+ * still returned, just without an end.
+ *
+ * @param {string} adminCredential
+ * @return {{success:boolean, reservations:Array, loans:Array, error?:string}}
+ */
+function getActivityLog(adminCredential) {
+  try {
+    if (!verifyAdminCredential_(adminCredential)) return { success: false, error: 'Admin session expired. Please log in again.' };
+
+    const sheet = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID)
+      .getSheetByName(CONFIG.ACTIVITY_LOG_SHEET_NAME);
+    if (!sheet || sheet.getLastRow() < 2) {
+      return { success: true, reservations: [], loans: [] };
+    }
+
+    const values = sheet.getDataRange().getValues();
+    const headerMap = getHeaderMap_(values[0]);
+    const col = {
+      timestamp:     getHeaderIndex_(headerMap, 'Timestamp'),
+      event:         getHeaderIndex_(headerMap, 'Event'),
+      bookNo:        getHeaderIndex_(headerMap, 'Book No'),
+      bookName:      getHeaderIndex_(headerMap, 'Book Name'),
+      customerId:    getHeaderIndex_(headerMap, 'Customer ID'),
+      customerName:  getHeaderIndex_(headerMap, 'Customer Name'),
+      actor:         getHeaderIndex_(headerMap, 'Actor'),
+      dueDate:       getHeaderIndex_(headerMap, 'Due Date'),
+      reservationId: getHeaderIndex_(headerMap, 'Reservation ID')
+    };
+
+    const rows = [];
+    for (let i = 1; i < values.length; i++) {
+      const row = values[i];
+      const event = trim_(row[col.event]);
+      if (!event) continue;
+      rows.push({
+        idx:           i,
+        sort:          activityTimeSortKey_(trim_(row[col.timestamp])),
+        timestamp:     trim_(row[col.timestamp]),
+        event,
+        bookNo:        trim_(row[col.bookNo]),
+        bookName:      trim_(row[col.bookName]),
+        customerId:    trim_(row[col.customerId]),
+        customerName:  trim_(row[col.customerName]),
+        actor:         trim_(row[col.actor]),
+        dueDate:       trim_(row[col.dueDate]),
+        reservationId: trim_(row[col.reservationId])
+      });
+    }
+    // Stable oldest-first order so "next row for this key" pairing below is
+    // chronological even when timestamps collide to the second.
+    rows.sort((a, b) => a.sort - b.sort || a.idx - b.idx);
+
+    const reservations = pairActivityThreads_(rows,
+      r => r.event === ACTIVITY_EVENT.RESERVED,
+      r => r.reservationId,
+      r => r.event === ACTIVITY_EVENT.UNRESERVED ||
+           r.event === ACTIVITY_EVENT.RESERVATION_CANCELLED ||
+           r.event === ACTIVITY_EVENT.ISSUED);
+
+    const loans = pairActivityThreads_(rows,
+      r => r.event === ACTIVITY_EVENT.ISSUED,
+      r => r.bookNo + '|' + r.customerId,
+      r => r.event === ACTIVITY_EVENT.RETURNED);
+
+    // Newest first for display.
+    reservations.sort((a, b) => b.start.sort - a.start.sort);
+    loans.sort((a, b) => b.start.sort - a.start.sort);
+
+    return {
+      success: true,
+      reservations: reservations.map(formatActivityThread_),
+      loans: loans.map(formatActivityThread_)
+    };
+  } catch (err) {
+    return reportError_('getActivityLog', err, adminCredential);
+  }
+}
+
+/**
+ * Pairs each row matching `isStart` with the next row matching `isEnd` that
+ * shares the same `keyOf` value. Rows are consumed in order so an end row is
+ * never reused across two starts. Returns [{ start, end }], end possibly null.
+ */
+function pairActivityThreads_(rowsOldestFirst, isStart, keyOf, isEnd) {
+  const threads = [];
+  const openByKey = {}; // key -> thread awaiting its end row
+
+  rowsOldestFirst.forEach(row => {
+    const key = keyOf(row);
+    if (isEnd(row) && key && openByKey[key]) {
+      openByKey[key].end = row;
+      delete openByKey[key];
+      return;
+    }
+    if (isStart(row)) {
+      const thread = { start: row, end: null };
+      threads.push(thread);
+      if (key) openByKey[key] = thread;
+    }
+  });
+
+  return threads;
+}
+
+/** Shapes one { start, end } thread into the plain object the client renders. */
+function formatActivityThread_(thread) {
+  const s = thread.start, e = thread.end;
+  return {
+    bookNo:        s.bookNo,
+    bookName:      s.bookName,
+    customerId:    s.customerId,
+    customerName:  s.customerName,
+    startEvent:    s.event,
+    startAt:       s.timestamp,
+    startActor:    s.actor,
+    dueDate:       s.dueDate,
+    endEvent:      e ? e.event : '',
+    endAt:         e ? e.timestamp : '',
+    endActor:      e ? e.actor : '',
+    heldDays:      e ? Math.round((e.sort - s.sort) / 86400000) : null
+  };
+}
+
 function loginAdmin(password) {
   try {
     if (!checkRateLimit_('admin-login', 10, 300)) {

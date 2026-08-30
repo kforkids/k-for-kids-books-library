@@ -868,6 +868,32 @@
   .chip-closed   { background: #fce4ec; color: #c62828; }
   .chip-pending  { background: #fff8e1; color: #b45309; }
 
+  /* ── Activity log panel ── */
+  #activityPanel { padding: 16px; max-width: 960px; margin: 0 auto; }
+  .activity-group-label {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; color: #999;
+    margin: 16px 0 8px;
+  }
+  .activity-group-label:first-child { margin-top: 0; }
+  .activity-row {
+    display: flex; align-items: flex-start; gap: 10px;
+    background: #fafafa; border-radius: 8px; padding: 10px 12px; margin-bottom: 6px;
+  }
+  .activity-dot { width: 8px; height: 8px; border-radius: 50%; margin-top: 6px; flex: none; }
+  .activity-dot.reserved  { background: #b06a1f; }
+  .activity-dot.issued    { background: #2f6b3a; }
+  .activity-dot.returned  { background: #9aa08c; }
+  .activity-dot.cancelled { background: #9a3b2e; }
+  .activity-row-main { flex: 1; min-width: 0; }
+  .activity-row-title { font-size: .83rem; font-weight: 700; color: #333; }
+  .activity-row-title .activity-bookno { color: #999; font-weight: 400; }
+  .activity-row-sub { font-size: .76rem; color: #777; margin-top: 2px; }
+  .activity-badge { font-size: .68rem; padding: 3px 9px; border-radius: 20px; flex: none; white-space: nowrap; font-weight: 700; }
+  .activity-badge.reserved  { background: #faf1e2; color: #b06a1f; }
+  .activity-badge.issued    { background: #eaf3e6; color: #2f6b3a; }
+  .activity-badge.returned  { background: #f0efe8; color: #666; }
+  .activity-badge.cancelled { background: #fbeae7; color: #9a3b2e; }
+
   /* ── One-shot confetti burst over a card's cover on a successful reserve ── */
   .confetti-layer {
     position: absolute;
@@ -945,6 +971,9 @@
   </button>
   <button class="admin-tab" id="tabCustomers" onclick="switchAdminTab('customers')">
     <i class="bi bi-people me-1"></i>Customers
+  </button>
+  <button class="admin-tab" id="tabActivity" onclick="switchAdminTab('activity')">
+    <i class="bi bi-clock-history me-1"></i>Activity log
   </button>
   <button class="admin-tab" id="btnReloadImageCache" onclick="reloadImageCache_()" title="Force a fresh scan of book cover images (e.g. after renaming files)">
     <i class="bi bi-arrow-clockwise me-1"></i>Reload image cache
@@ -1195,6 +1224,37 @@
     </div>
   </div>
 
+</div>
+
+<!-- ══════════════ ACTIVITY LOG PANEL ══════════════ -->
+<div id="activityPanel" style="display:none">
+  <div class="panel-card">
+    <div class="panel-card-header">
+      <h6><i class="bi bi-clock-history me-2"></i>Activity log</h6>
+      <div class="d-flex gap-2 align-items-center">
+        <input type="text" id="activitySearch" class="form-control form-control-sm" placeholder="Search book or customer…"
+               style="max-width:200px" oninput="renderActivityLog_()">
+        <button class="btn btn-sm btn-outline-secondary" onclick="loadActivityLog()">
+          <i class="bi bi-arrow-clockwise"></i>
+        </button>
+      </div>
+    </div>
+    <div class="panel-card-body">
+      <div class="btn-group btn-group-sm mb-3" role="group" aria-label="Activity view">
+        <button type="button" class="btn btn-outline-secondary active" id="activityViewReservations"
+                onclick="setActivityView_('reservations')">Reservations</button>
+        <button type="button" class="btn btn-outline-secondary" id="activityViewLoans"
+                onclick="setActivityView_('loans')">Issues and returns</button>
+      </div>
+      <div id="activityLoadingState" class="text-center py-4 text-muted" style="display:none">
+        <div class="spinner-border spinner-border-sm me-2"></div>Loading…
+      </div>
+      <div id="activityEmptyState" class="text-center py-4 text-muted" style="display:none">
+        <i class="bi bi-clock-history d-block mb-2" style="font-size:2rem"></i>No activity found.
+      </div>
+      <div id="activityGroups"></div>
+    </div>
+  </div>
 </div>
 
 <!-- ══════════════ CUSTOMER AUTH MODAL ══════════════ -->
@@ -4058,6 +4118,7 @@ function switchAdminTab(tab) {
   activeAdminTab = tab;
   document.getElementById('tabBooks').classList.toggle('active', tab === 'books');
   document.getElementById('tabCustomers').classList.toggle('active', tab === 'customers');
+  document.getElementById('tabActivity').classList.toggle('active', tab === 'activity');
 
   const booksUI = [
     document.getElementById('searchBarEl'),
@@ -4067,9 +4128,11 @@ function switchAdminTab(tab) {
   ];
   const showBooks = tab === 'books';
   booksUI.forEach(el => { if (el) el.style.display = showBooks ? '' : 'none'; });
-  document.getElementById('customersPanel').style.display = showBooks ? 'none' : '';
+  document.getElementById('customersPanel').style.display = tab === 'customers' ? '' : 'none';
+  document.getElementById('activityPanel').style.display  = tab === 'activity'  ? '' : 'none';
 
   if (tab === 'customers' && allCustomers.length === 0) loadCustomers();
+  if (tab === 'activity'  && activityReservations.length === 0 && activityLoans.length === 0) loadActivityLog();
 }
 
 // ════════════════════════════════════════════════
@@ -4388,6 +4451,145 @@ function submitAddCustomer() {
     })
     .withFailureHandler(err => showToast('Something went wrong. Please try again.', 'danger'))
     .addCustomer(name, date, location, address, email, normalizedPhone, plan, adminToken);
+}
+
+// ════════════════════════════════════════════════
+// Activity log
+// ════════════════════════════════════════════════
+// The server pairs raw log rows into "threads" (reservation -> its outcome,
+// issue -> its return) — this file only groups those threads by day and
+// renders them. Same underlying Activity-Log sheet; no schema change.
+let activityReservations = [];
+let activityLoans = [];
+let activityView = 'reservations'; // 'reservations' | 'loans'
+
+function loadActivityLog() {
+  document.getElementById('activityLoadingState').style.display = '';
+  document.getElementById('activityEmptyState').style.display   = 'none';
+  document.getElementById('activityGroups').innerHTML = '';
+
+  google.script.run
+    .withSuccessHandler(res => {
+      document.getElementById('activityLoadingState').style.display = 'none';
+      if (!res.success) { showToast(res.error || 'Failed to load activity log.', 'danger'); return; }
+      activityReservations = res.reservations || [];
+      activityLoans        = res.loans || [];
+      renderActivityLog_();
+    })
+    .withFailureHandler(err => {
+      document.getElementById('activityLoadingState').style.display = 'none';
+      showToast('Something went wrong. Please try again.', 'danger');
+    })
+    .getActivityLog(adminToken);
+}
+
+function setActivityView_(view) {
+  activityView = view;
+  document.getElementById('activityViewReservations').classList.toggle('active', view === 'reservations');
+  document.getElementById('activityViewLoans').classList.toggle('active', view === 'loans');
+  renderActivityLog_();
+}
+
+// Reservation thread end-event -> { label, badgeClass }. No end row yet means
+// the reservation is still open and waiting.
+const ACTIVITY_RESERVATION_OUTCOME = {
+  ISSUED:                 { label: 'Converted to loan', badgeClass: 'issued' },
+  UNRESERVED:             { label: 'Self-cancelled',    badgeClass: 'cancelled' },
+  RESERVATION_CANCELLED:  { label: 'Cancelled',          badgeClass: 'cancelled' }
+};
+
+function activityThreadMatchesSearch_(t, q) {
+  if (!q) return true;
+  return (t.bookName || '').toLowerCase().includes(q) ||
+         (t.bookNo    || '').toLowerCase().includes(q) ||
+         (t.customerName || '').toLowerCase().includes(q);
+}
+
+// Groups threads (already newest-first from the server) into day buckets,
+// keyed by the calendar date portion of their start timestamp
+// ('dd/MM/yyyy HH:mm:ss' -> 'dd/MM/yyyy'), preserving overall order.
+function groupActivityByDay_(threads) {
+  const groups = [];
+  const byDay = {};
+  threads.forEach(t => {
+    const day = (t.startAt || '').split(' ')[0] || 'Unknown date';
+    if (!byDay[day]) {
+      byDay[day] = { day, threads: [] };
+      groups.push(byDay[day]);
+    }
+    byDay[day].threads.push(t);
+  });
+  return groups;
+}
+
+function renderActivityLog_() {
+  const q = document.getElementById('activitySearch').value.trim().toLowerCase();
+  const source = activityView === 'loans' ? activityLoans : activityReservations;
+  const threads = source.filter(t => activityThreadMatchesSearch_(t, q));
+
+  const empty = document.getElementById('activityEmptyState');
+  const container = document.getElementById('activityGroups');
+
+  if (!threads.length) {
+    container.innerHTML = '';
+    empty.style.display = '';
+    return;
+  }
+  empty.style.display = 'none';
+
+  const groups = groupActivityByDay_(threads);
+  container.innerHTML = groups.map(g => {
+    const rows = g.threads.map(t => activityView === 'loans' ? renderLoanRow_(t) : renderReservationRow_(t)).join('');
+    return `<div class="activity-group-label">${escHtml(g.day)}</div>${rows}`;
+  }).join('');
+}
+
+function renderReservationRow_(t) {
+  const outcome = t.endEvent ? ACTIVITY_RESERVATION_OUTCOME[t.endEvent] : null;
+  const dotClass = outcome ? outcome.badgeClass : 'reserved';
+  const badgeLabel = outcome ? outcome.label : 'Waiting';
+  const badgeClass = outcome ? outcome.badgeClass : 'reserved';
+
+  let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; reserved ' + escHtml(t.startAt || '—');
+  if (t.endAt) {
+    sub += ' &middot; ' + (t.endEvent === 'ISSUED' ? 'issued' : 'ended') + ' ' + escHtml(t.endAt.split(' ')[0]);
+    if (t.heldDays !== null && t.heldDays !== undefined) sub += ' &middot; held ' + t.heldDays + (t.heldDays === 1 ? ' day' : ' days');
+  } else {
+    sub += ' &middot; waiting';
+  }
+
+  return `<div class="activity-row">
+    <div class="activity-dot ${dotClass}"></div>
+    <div class="activity-row-main">
+      <div class="activity-row-title">${escHtml(t.bookName || 'Unknown book')} <span class="activity-bookno">&middot; ${escHtml(t.bookNo)}</span></div>
+      <div class="activity-row-sub">${sub}</div>
+    </div>
+    <div class="activity-badge ${badgeClass}">${escHtml(badgeLabel)}</div>
+  </div>`;
+}
+
+function renderLoanRow_(t) {
+  const isReturned = t.endEvent === 'RETURNED';
+  const dotClass = isReturned ? 'returned' : 'issued';
+  const badgeClass = isReturned ? 'returned' : 'issued';
+  const badgeLabel = isReturned ? 'Returned' : 'On loan';
+
+  let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; issued ' + escHtml(t.startAt || '—');
+  if (isReturned) {
+    sub += ' &middot; returned ' + escHtml(t.endAt.split(' ')[0]);
+    if (t.heldDays !== null && t.heldDays !== undefined) sub += ' &middot; kept ' + t.heldDays + (t.heldDays === 1 ? ' day' : ' days');
+  } else if (t.dueDate) {
+    sub += ' &middot; due ' + escHtml(t.dueDate);
+  }
+
+  return `<div class="activity-row">
+    <div class="activity-dot ${dotClass}"></div>
+    <div class="activity-row-main">
+      <div class="activity-row-title">${escHtml(t.bookName || 'Unknown book')} <span class="activity-bookno">&middot; ${escHtml(t.bookNo)}</span></div>
+      <div class="activity-row-sub">${sub}</div>
+    </div>
+    <div class="activity-badge ${badgeClass}">${escHtml(badgeLabel)}</div>
+  </div>`;
 }
 </script>
 </body>
