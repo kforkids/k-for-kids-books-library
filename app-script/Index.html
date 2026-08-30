@@ -1548,15 +1548,8 @@
       <div class="modal-body">
         <p class="mb-3">Change the subscription plan for <b id="updatePlanCustName"></b>.</p>
         <div class="mb-2">
-          <label class="form-label" for="updatePlanSelect">Subscription plan</label>
-          <select id="updatePlanSelect" class="form-select">
-            <option value="2">2 books / month</option>
-            <option value="4">4 books / month</option>
-            <option value="6">6 books / month</option>
-            <option value="8">8 books / month</option>
-            <option value="10">10 books / month</option>
-            <option value="12">12 books / month</option>
-          </select>
+          <label class="form-label" for="updatePlanLimit">Books per month</label>
+          <input type="number" id="updatePlanLimit" class="form-control" min="1" step="1" placeholder="e.g. 6">
         </div>
         <div class="small text-muted">
           <i class="bi bi-info-circle me-1"></i>Updates the monthly reservation limit. Does not change the account status.
@@ -4329,24 +4322,23 @@ function submitApproveCustomer() {
     .approveCustomer(approveCustomerId, plan, limit, adminToken);
 }
 
-// Open the "Update subscription plan" modal for an existing customer, preselecting
-// their current plan (derived from their monthly limit) when it's one we offer.
+// Open the "Update subscription plan" modal for an existing customer,
+// prefilling their current monthly limit.
 function doUpdatePlan(customerId, customerName, currentLimit) {
   if (!customerId) { showToast('Missing customer id.', 'danger'); return; }
   updatePlanCustomerId = customerId;
   document.getElementById('updatePlanCustName').textContent = customerName || customerId;
-  const select = document.getElementById('updatePlanSelect');
-  const current = String(parseInt(currentLimit, 10) || '');
-  select.value = [...select.options].some(o => o.value === current) ? current : '4';
+  const current = parseInt(currentLimit, 10);
+  document.getElementById('updatePlanLimit').value = current > 0 ? current : '';
   updatePlanModal.show();
 }
 
-// Confirm a plan change: the selected value is the new monthly reservation limit,
+// Confirm a plan change: the entered value is the new monthly reservation limit,
 // and the plan string is derived from it (e.g. "6 books/month").
 function submitUpdatePlan() {
   if (!updatePlanCustomerId) { showToast('Missing customer id.', 'danger'); return; }
-  const limit = parseInt(document.getElementById('updatePlanSelect').value, 10);
-  if (!(limit > 0)) { showToast('Please choose a subscription plan.', 'warning'); return; }
+  const limit = parseInt(document.getElementById('updatePlanLimit').value, 10);
+  if (!(limit > 0)) { showToast('Please enter a number of books per month.', 'warning'); return; }
   const plan = limit + ' books/month';
 
   setButtonLoading('updatePlanModal', true);
