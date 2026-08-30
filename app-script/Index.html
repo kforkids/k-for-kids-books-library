@@ -4507,19 +4507,33 @@ function activityThreadMatchesSearch_(t, q) {
 
 // Groups threads (already newest-first from the server) into day buckets,
 // keyed by the calendar date portion of their start timestamp
-// ('dd/MM/yyyy HH:mm:ss' -> 'dd/MM/yyyy'), preserving overall order.
+// ('dd/MM/yyyy HH:mm:ss' -> 'dd/MM/yyyy'), preserving overall order. Each
+// group's label always shows both the weekday and the date (e.g.
+// "Thu, 15/08/2026"), never one without the other.
 function groupActivityByDay_(threads) {
   const groups = [];
   const byDay = {};
   threads.forEach(t => {
-    const day = (t.startAt || '').split(' ')[0] || 'Unknown date';
+    const dateOnly = (t.startAt || '').split(' ')[0];
+    const day = dateOnly || 'Unknown date';
     if (!byDay[day]) {
-      byDay[day] = { day, threads: [] };
+      byDay[day] = { day, label: activityDayLabel_(dateOnly), threads: [] };
       groups.push(byDay[day]);
     }
     byDay[day].threads.push(t);
   });
   return groups;
+}
+
+// "Thu, 15/08/2026" from a 'dd/MM/yyyy' string, or the raw fallback text when
+// the date can't be parsed (so a bad row still shows something, not blank).
+function activityDayLabel_(dateOnly) {
+  const m = String(dateOnly || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!m) return dateOnly || 'Unknown date';
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+  if (isNaN(d.getTime())) return dateOnly;
+  const weekday = d.toLocaleDateString('en-US', { weekday: 'short' });
+  return weekday + ', ' + dateOnly;
 }
 
 function renderActivityLog_() {
@@ -4540,14 +4554,14 @@ function renderActivityLog_() {
   const groups = groupActivityByDay_(threads);
   container.innerHTML = groups.map(g => {
     const rows = g.threads.map(t => activityView === 'loans' ? renderLoanRow_(t) : renderReservationRow_(t)).join('');
-    return `<div class="activity-group-label">${escHtml(g.day)}</div>${rows}`;
+    return `<div class="activity-group-label">${escHtml(g.label)}</div>${rows}`;
   }).join('');
 }
 
 function renderReservationRow_(t) {
   const outcome = t.endEvent ? ACTIVITY_RESERVATION_OUTCOME[t.endEvent] : null;
   const dotClass = outcome ? outcome.badgeClass : 'reserved';
-  const badgeLabel = outcome ? outcome.label : 'Waiting';
+  const badgeLabel = outcome ? outcome.label : 'Reserved';
   const badgeClass = outcome ? outcome.badgeClass : 'reserved';
 
   let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; reserved ' + escHtml(t.startAt || '—');
@@ -4555,7 +4569,7 @@ function renderReservationRow_(t) {
     sub += ' &middot; ' + (t.endEvent === 'ISSUED' ? 'issued' : 'ended') + ' ' + escHtml(t.endAt.split(' ')[0]);
     if (t.heldDays !== null && t.heldDays !== undefined) sub += ' &middot; held ' + t.heldDays + (t.heldDays === 1 ? ' day' : ' days');
   } else {
-    sub += ' &middot; waiting';
+    sub += ' &middot; not yet issued or cancelled';
   }
 
   return `<div class="activity-row">
@@ -4572,7 +4586,7 @@ function renderLoanRow_(t) {
   const isReturned = t.endEvent === 'RETURNED';
   const dotClass = isReturned ? 'returned' : 'issued';
   const badgeClass = isReturned ? 'returned' : 'issued';
-  const badgeLabel = isReturned ? 'Returned' : 'On loan';
+  const badgeLabel = isReturned ? 'Returned' : 'Issued';
 
   let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; issued ' + escHtml(t.startAt || '—');
   if (isReturned) {
