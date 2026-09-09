@@ -1902,9 +1902,14 @@ document.addEventListener('DOMContentLoaded', () => {
 // in the URL as plain text; it's obfuscation, not real secrecy, since anyone
 // can decode base64 — it just keeps the codes from being visible/indexable
 // at a glance (browser history, shared screenshots, chat previews).
+//
+// Apps Script serves this page inside a sandboxed googleusercontent.com
+// iframe, so window.location.search here is NOT the outer script.google.com
+// /exec URL's query string. doGet() reads `?i=` server-side (from e.parameter)
+// and stamps it into `<?= inviteParam ?>` below, which is the only reliable
+// way to get it into this page.
 function openInvitePaneFromUrl_() {
-  const params = new URLSearchParams(window.location.search);
-  const encoded = params.get('i');
+  const encoded = '<?= inviteParam ?>';
   if (!encoded) return;
   let decoded;
   try {

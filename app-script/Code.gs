@@ -587,7 +587,14 @@ const IMAGE_MAP = {
 // ─────────────────────────────────────────────
 
 function doGet(e) {
-  return HtmlService.createHtmlOutputFromFile('Index')
+  // Apps Script renders the app inside a sandboxed googleusercontent.com
+  // iframe, so client-side JS never sees the outer script.google.com/exec
+  // URL's query string via window.location. To support invite deep links
+  // (?i=<encoded customerId/inviteCode>), the param has to be read here,
+  // server-side, from `e.parameter`, and stamped into the page.
+  const template = HtmlService.createTemplateFromFile('Index');
+  template.inviteParam = (e && e.parameter && e.parameter.i) || '';
+  return template.evaluate()
     .setTitle('K for Kids Books Library')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
