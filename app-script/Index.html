@@ -1892,7 +1892,44 @@ document.addEventListener('DOMContentLoaded', () => {
     loadBooks(true);
     if (customerToken && currentCustomer) loadMyReadBooks(true);
   });
+
+  openInvitePaneFromUrl_();
 });
+
+// Supports invite links like ?i=<encoded> that deep-link straight into the
+// "Join with invite code" pane with Customer ID and Invite Code pre-filled.
+// The param is base64 of "customerId|inviteCode" so the values aren't sitting
+// in the URL as plain text; it's obfuscation, not real secrecy, since anyone
+// can decode base64 — it just keeps the codes from being visible/indexable
+// at a glance (browser history, shared screenshots, chat previews).
+function openInvitePaneFromUrl_() {
+  const params = new URLSearchParams(window.location.search);
+  const encoded = params.get('i');
+  if (!encoded) return;
+  let decoded;
+  try {
+    decoded = decodeURIComponent(escape(atob(base64UrlToBase64_(encoded))));
+  } catch (err) {
+    return; // malformed/tampered param — fall back to the normal landing page
+  }
+  const sepIdx = decoded.indexOf('|');
+  if (sepIdx === -1) return;
+  const customerId = decoded.slice(0, sepIdx);
+  const inviteCode = decoded.slice(sepIdx + 1);
+  if (!customerId || !inviteCode) return;
+
+  openAuthModal('invite');
+  document.getElementById('claimCustomerId').value = customerId;
+  document.getElementById('claimInviteCode').value = inviteCode;
+}
+
+// base64url -> base64 (invite links use the URL-safe alphabet so the param
+// never needs percent-encoding).
+function base64UrlToBase64_(encoded) {
+  const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/');
+  const padded = base64 + '='.repeat((4 - (base64.length % 4)) % 4);
+  return padded;
+}
 
 // `silent`: skip the full-page loading state and, if the data hasn't actually
 // changed, skip re-rendering too. Used by the tab-focus refresh so coming
