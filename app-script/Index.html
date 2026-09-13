@@ -1958,6 +1958,15 @@ const BOOK_DIFF_FIELDS = [
   'category', 'language', 'ageGroup',
 ];
 
+// In-place Fisher–Yates shuffle.
+function shuffleArray_(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+  return arr;
+}
+
 function booksDiffer_(prevBooks, nextBooks) {
   if (prevBooks.length !== nextBooks.length) return true;
   const prevByKey = new Map(prevBooks.map(b => [b.bookNo, b]));
@@ -1981,6 +1990,12 @@ function onBooksLoaded(result, silent) {
     return;
   }
   const nextBooks = result.books || [];
+  // Shuffle for variety on every fresh (non-silent) load — covers first page
+  // load and right after login, not just the anonymous preview. Silent
+  // background refreshes skip this so the grid doesn't reshuffle under the
+  // user while they're browsing. Books with a cover still show first; the
+  // shuffle only randomizes order WITHIN the "has image" / "no image" groups.
+  if (!silent) shuffleArray_(nextBooks);
   nextBooks.sort((a, b) => (b.imageUrl ? 1 : 0) - (a.imageUrl ? 1 : 0));
 
   if (silent && !booksDiffer_(allBooks, nextBooks)) return; // nothing changed — skip the repaint
@@ -2008,6 +2023,11 @@ function applyFilters() {
   const sr = filters.series.toLowerCase();
   const st = filters.status.toLowerCase();
 
+  // Non-admin customers browsing by Status should only see THEIR OWN issued /
+  // reserved books under those statuses — not every other customer's. Admins
+  // still see the full system-wide list for any status.
+  const scopeStatusToMe = !adminMode && Boolean(currentCustomer);
+
   filtered = allBooks.filter(b => {
     if (filters.mine === 'reserved' && !(b.status === 'Reserved' && b.isMyReservation)) return false;
     if (filters.mine === 'issued'   && !b.isMyIssue) return false;
@@ -2016,6 +2036,8 @@ function applyFilters() {
     if (ag && ageGroupFilterValue(b.ageGroup) !== ag) return false;
     if (sr && (b.series || '').toLowerCase() !== sr) return false;
     if (st && b.status.toLowerCase()   !== st) return false;
+    if (scopeStatusToMe && st === 'issued'   && !b.isMyIssue) return false;
+    if (scopeStatusToMe && st === 'reserved' && !b.isMyReservation) return false;
     if (filters.withImage && !b.imageUrl)       return false;
     if (filters.noImage   &&  b.imageUrl)        return false;
     if (q && !b.bookName.toLowerCase().includes(q) &&
