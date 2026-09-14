@@ -694,12 +694,17 @@ function setupCustomerReservationSystem(adminCredential, options) {
       summary
     );
     // Append-only activity log (history of reservations, issues, returns).
-    ensureSheetWithHeaders_(
+    const activityLog = ensureSheetWithHeaders_(
       targetSs,
       CONFIG.ACTIVITY_LOG_SHEET_NAME,
       ACTIVITY_LOG_HEADERS,
       summary
     );
+    // Force the Timestamp column to plain text so Sheets never silently
+    // reinterprets our dd/MM/yyyy string using the spreadsheet's locale (which,
+    // on a US-locale sheet, would read "04/09/2026" as April 9 instead of the
+    // intended September 4 — see logActivity_ for the write format).
+    ensureActivityLogTimestampIsPlainText_(activityLog.sheet, activityLog.headerRow, activityLog.columns);
 
     const customerSetup = migrateLegacyCustomers_(legacySs, customerDetails.sheet, customerDetails.headerRow, now);
     summary.copiedCustomers = customerSetup.copiedCustomers;
@@ -1311,6 +1316,18 @@ function computeReadBooksForCustomer_(customerId) {
   const readBookNos = history.map(h => h.bookNo);
   history.forEach(h => { delete h.sort; }); // don't leak the sort key to the client
   return { success: true, readBookNos, history };
+}
+
+// Normalize an Activity-Log Timestamp cell to its 'dd/MM/yyyy HH:mm:ss' IST
+// text form. Cells are written as plain text (see ensureActivityLogTimestampIsPlainText_),
+// so this is normally just trim_(val). It also tolerates a cell that Sheets
+// re-typed as a Date (e.g. before the plain-text guard was in place) by
+// re-formatting it explicitly in IST rather than falling through to
+// trim_'s default String(dateObj), which would print in the server's
+// locale/timezone instead of our dd/MM/yyyy convention.
+function activityLogTimestampText_(val) {
+  if (val instanceof Date) return Utilities.formatDate(val, 'Asia/Kolkata', 'dd/MM/yyyy HH:mm:ss');
+  return trim_(val);
 }
 
 // Parse the Activity-Log 'dd/MM/yyyy HH:mm:ss' IST string into a sortable
@@ -2484,6 +2501,118 @@ function logActivity_(event, bookNo, bookName, customerId, customerName, actor, 
   }
 }
 
+/**
+ * Forces the Activity-Log Timestamp column to plain-text ('@') number format.
+ *
+ * Without this, Sheets auto-detects our appended "dd/MM/yyyy HH:mm:ss" string
+ * as a date-like value and silently re-parses it using the SPREADSHEET's
+ * locale date order. On a US-locale (mm/dd) sheet, "04/09/2026 8:57:10"
+ * (4 Sep) gets reinterpreted as April 9 and the wrong date is what actually
+ * gets stored in the cell — no code-level date parsing bug, just Sheets
+ * quietly rewriting the value on ingest. Plain-text format stops that.
+ *
+ * Safe/idempotent to call repeatedly (e.g. every time setup runs) — setting
+ * the format again is a no-op once already plain text.
+ */
+function ensureActivityLogTimestampIsPlainText_(sheet, headerRow, columns) {
+  try {
+    const col = getHeaderIndex_(columns, 'Timestamp');
+    if (col === -1) return;
+    const lastRow = sheet.getLastRow();
+    const numRows = Math.max(lastRow - headerRow, 1);
+    sheet.getRange(headerRow + 1, col + 1, numRows, 1).setNumberFormat('@');
+  } catch (e) {
+    Logger.log('ensureActivityLogTimestampIsPlainText_ error: ' + e.message);
+  }
+}
+
+/**
+ * One-time repair for Activity-Log rows whose Timestamp cell was already
+ * corrupted by the Sheets auto-date-parsing bug described above (day/month
+ * swapped at ingest, e.g. 4 Sep stored as April 9). Run manually from the
+ * Apps Script editor (Run > repairActivityLogTimestamps) — NOT wired to any
+ * UI action, since this rewrites historical data and should be reviewed.
+ *
+ * IMPORTANT — this can only be decided correctly at the SHEET level, not
+ * per-row: logActivity_ always writes "dd/MM/yyyy ..." (day-first). If the
+ * spreadsheet's locale is ALSO day-first, Sheets parsed every Date-typed cell
+ * correctly and swapping would introduce NEW corruption. Only if the
+ * spreadsheet's locale is month-first (e.g. en_US) did every such cell get
+ * its day and month swapped on ingest — and in that case EVERY Date-typed
+ * cell needs the swap, not just the ones that "look" swapped, because a
+ * cell with day<=12 gives no way to tell the two cases apart by inspection.
+ * So: check the actual locale first, refuse to touch anything if it's
+ * day-first (nothing to repair), and otherwise swap every Date-typed cell
+ * unconditionally.
+ *
+ * Defaults to a DRY RUN (reports what it would change without writing
+ * anything). Pass apply=true to actually rewrite the sheet.
+ *
+ * Returns a summary instead of writing to the UI so it can be inspected in
+ * the Apps Script execution log before trusting the result.
+ */
+function repairActivityLogTimestamps(apply) {
+  const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
+  const locale = ss.getSpreadsheetLocale();
+  // Locales whose short date format is day-first (dd/MM/yyyy) — matches what
+  // we write, so Sheets would have parsed our strings correctly and there is
+  // nothing to repair. This is a conservative allowlist of common day-first
+  // locales; anything not on it is treated as possibly month-first and left
+  // for a human to confirm before running with apply=true.
+  const DAY_FIRST_LOCALES = ['en_GB','en_IN','en_AU','en_ZA','en_IE','en_NZ','en_SG'];
+  if (DAY_FIRST_LOCALES.indexOf(locale) !== -1) {
+    return { skipped: true, reason: 'Spreadsheet locale "' + locale + '" is day-first — timestamps were parsed correctly, nothing to repair.' };
+  }
+
+  const sheet = ss.getSheetByName(CONFIG.ACTIVITY_LOG_SHEET_NAME);
+  if (!sheet) return { error: 'Activity-Log sheet not found.' };
+
+  const data = sheet.getDataRange().getValues();
+  const headerRow = findHeaderRowByAnyHeader_(data, ACTIVITY_LOG_HEADERS);
+  if (headerRow === -1) return { error: 'Could not find Activity-Log header row.' };
+
+  const headerValues = data[headerRow];
+  const columns = getHeaderMap_(headerValues);
+  const col = getHeaderIndex_(columns, 'Timestamp');
+  if (col === -1) return { error: 'Timestamp column not found.' };
+
+  const tz = 'Asia/Kolkata';
+  let repaired = 0;
+  let skippedInvalid = 0;
+  const skippedRows = [];
+  const sample = [];
+
+  for (let i = headerRow + 1; i < data.length; i++) {
+    const cell = data[i][col];
+    if (!(cell instanceof Date)) continue; // already plain text — nothing to do
+
+    // getValues() returns the Date as Sheets computed it; read back the
+    // calendar fields Sheets stored (these are what's wrong) and swap them.
+    const storedMonth = cell.getMonth() + 1; // was actually the day we wrote
+    const storedDay   = cell.getDate();      // was actually the month we wrote
+
+    // storedMonth becomes the true day, storedDay becomes the true month.
+    // storedMonth is always a valid day-of-month (1-31) by construction, but
+    // storedDay must be <= 12 to be a valid month — if not, this cell isn't
+    // one of ours in the expected shape; leave it for manual review.
+    if (storedDay > 12) { skippedInvalid++; skippedRows.push(i + 1); continue; }
+
+    const trueDay   = storedMonth;
+    const trueMonth = storedDay;
+    const fixed = new Date(cell.getFullYear(), trueMonth - 1, trueDay,
+      cell.getHours(), cell.getMinutes(), cell.getSeconds());
+    const asText = Utilities.formatDate(fixed, tz, 'dd/MM/yyyy HH:mm:ss');
+
+    if (sample.length < 10) sample.push({ row: i + 1, before: Utilities.formatDate(cell, tz, 'dd/MM/yyyy HH:mm:ss'), after: asText });
+    if (apply) sheet.getRange(i + 1, col + 1).setNumberFormat('@').setValue(asText);
+    repaired++;
+  }
+
+  if (apply) ensureActivityLogTimestampIsPlainText_(sheet, headerRow, columns);
+
+  return { dryRun: !apply, locale, repaired, skippedInvalid, skippedRows, sample };
+}
+
 // ════════════════════════════════════════════════
 // Activity log — admin read view
 // ════════════════════════════════════════════════
@@ -2536,10 +2665,11 @@ function getActivityLog(adminCredential) {
       const row = values[i];
       const event = trim_(row[col.event]);
       if (!event) continue;
+      const timestampText = activityLogTimestampText_(row[col.timestamp]);
       rows.push({
         idx:           i,
-        sort:          activityTimeSortKey_(trim_(row[col.timestamp])),
-        timestamp:     trim_(row[col.timestamp]),
+        sort:          activityTimeSortKey_(timestampText),
+        timestamp:     timestampText,
         event,
         bookNo:        trim_(row[col.bookNo]),
         bookName:      trim_(row[col.bookName]),
