@@ -2631,6 +2631,29 @@ function repairActivityLogTimestamps(apply) {
   return { dryRun: !apply, locale, repaired, skippedInvalid, skippedRows, sample };
 }
 
+/**
+ * Convenience wrapper so this can be run directly from the Apps Script
+ * editor's function picker (Run > select function > Run): plain function
+ * calls there always execute with zero arguments, so
+ * repairActivityLogTimestamps itself can't be picked with apply=true from
+ * the dropdown. Run this one first, then check View > Executions (or
+ * View > Logs) for the JSON summary — locale, how many rows it would fix,
+ * and a before/after sample — before running repairActivityLogTimestampsApply.
+ */
+function repairActivityLogTimestampsDryRun() {
+  Logger.log(JSON.stringify(repairActivityLogTimestamps(), null, 2));
+}
+
+/**
+ * Actually rewrites the sheet. Only run this after
+ * repairActivityLogTimestampsDryRun's output looks correct — same picker
+ * workflow: Run > select repairActivityLogTimestampsApply > Run, then check
+ * View > Executions for the summary of what was changed.
+ */
+function repairActivityLogTimestampsApply() {
+  Logger.log(JSON.stringify(repairActivityLogTimestamps(true), null, 2));
+}
+
 // ════════════════════════════════════════════════
 // Activity log — admin read view
 // ════════════════════════════════════════════════
