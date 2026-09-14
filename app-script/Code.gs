@@ -2496,6 +2496,19 @@ function logActivity_(event, bookNo, bookName, customerId, customerName, actor, 
       extra.reservationId || '',
       extra.notes || ''
     ]);
+    // appendRow lands in a brand-new row that may not have inherited the
+    // plain-text format set on the pre-existing range (setup only formats
+    // rows that already existed at the time it ran) — Sheets would then
+    // auto-detect this cell as a date and silently re-parse it using the
+    // spreadsheet's locale, corrupting it (see
+    // ensureActivityLogTimestampIsPlainText_). Force this exact cell to
+    // plain text and rewrite the value so it can never be reinterpreted,
+    // regardless of column/range state.
+    const timestampCol = getHeaderIndex_(getHeaderMap_(
+      sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]), 'Timestamp');
+    if (timestampCol !== -1) {
+      sheet.getRange(sheet.getLastRow(), timestampCol + 1).setNumberFormat('@').setValue(timestamp);
+    }
   } catch (e) {
     Logger.log('logActivity_ error: ' + e.message);
   }
@@ -2518,8 +2531,13 @@ function ensureActivityLogTimestampIsPlainText_(sheet, headerRow, columns) {
   try {
     const col = getHeaderIndex_(columns, 'Timestamp');
     if (col === -1) return;
-    const lastRow = sheet.getLastRow();
-    const numRows = Math.max(lastRow - headerRow, 1);
+    // Format the WHOLE column (through the sheet's max row), not just the
+    // rows populated so far — otherwise every row appended after this call
+    // (i.e. every real reservation/issue/return from here on) lands outside
+    // the formatted range and is right back to being auto-detected as a
+    // date by Sheets. logActivity_ additionally re-asserts plain text on
+    // its own just-appended cell as a second, row-level guarantee.
+    const numRows = Math.max(sheet.getMaxRows() - headerRow, 1);
     sheet.getRange(headerRow + 1, col + 1, numRows, 1).setNumberFormat('@');
   } catch (e) {
     Logger.log('ensureActivityLogTimestampIsPlainText_ error: ' + e.message);
