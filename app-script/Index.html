@@ -4290,6 +4290,37 @@ function parseDdMmYyyy_(s) {
   return isNaN(d.getTime()) ? null : d;
 }
 
+const MONTH_NAMES_ = ['January','February','March','April','May','June',
+  'July','August','September','October','November','December'];
+
+// Parse a dd/MM/yyyy[ HH:mm:ss] string (Activity-Log / reservedAt / issuedAt
+// convention) into a Date, or null if unparseable.
+function parseDdMmYyyyTime_(s) {
+  const m = String(s || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return null;
+  const d = new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]),
+    Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+  return isNaN(d.getTime()) ? null : d;
+}
+
+// Format a dd/MM/yyyy[ HH:mm:ss] string as "10 September 2026 10:46:50 AM"
+// (or "10 September 2026" when the source has no time component). Falls back
+// to the original string unchanged if it doesn't match the expected shape.
+function friendlyDateTime_(s) {
+  if (!s) return '';
+  const hasTime = / \d{1,2}:\d{2}/.test(s);
+  const d = parseDdMmYyyyTime_(s);
+  if (!d) return s;
+  const datePart = d.getDate() + ' ' + MONTH_NAMES_[d.getMonth()] + ' ' + d.getFullYear();
+  if (!hasTime) return datePart;
+  let h = d.getHours();
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12; if (h === 0) h = 12;
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return datePart + ' ' + h + ':' + mm + ':' + ss + ' ' + ampm;
+}
+
 // Compact elapsed duration since a start date, e.g. "1y 1m", "3m", "12d".
 // Empty string if the date is missing/unparseable or in the future.
 function elapsedSince_(dateStr) {
@@ -4656,9 +4687,9 @@ function renderReservationRow_(t) {
   const badgeLabel = outcome ? outcome.label : 'Reserved';
   const badgeClass = outcome ? outcome.badgeClass : 'reserved';
 
-  let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; reserved ' + escHtml(t.startAt || '—');
+  let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; reserved ' + escHtml(friendlyDateTime_(t.startAt) || '—');
   if (t.endAt) {
-    sub += ' &middot; ' + (t.endEvent === 'ISSUED' ? 'issued' : 'ended') + ' ' + escHtml(t.endAt.split(' ')[0]);
+    sub += ' &middot; ' + (t.endEvent === 'ISSUED' ? 'issued' : 'ended') + ' ' + escHtml(friendlyDateTime_(t.endAt.split(' ')[0]));
     if (t.heldDays !== null && t.heldDays !== undefined) sub += ' &middot; held ' + t.heldDays + (t.heldDays === 1 ? ' day' : ' days');
   } else {
     sub += ' &middot; not yet issued or cancelled';
@@ -4680,12 +4711,12 @@ function renderLoanRow_(t) {
   const badgeClass = isReturned ? 'returned' : 'issued';
   const badgeLabel = isReturned ? 'Returned' : 'Issued';
 
-  let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; issued ' + escHtml(t.startAt || '—');
+  let sub = escHtml(t.customerName || 'Unknown customer') + ' &middot; issued ' + escHtml(friendlyDateTime_(t.startAt) || '—');
   if (isReturned) {
-    sub += ' &middot; returned ' + escHtml(t.endAt.split(' ')[0]);
+    sub += ' &middot; returned ' + escHtml(friendlyDateTime_(t.endAt.split(' ')[0]));
     if (t.heldDays !== null && t.heldDays !== undefined) sub += ' &middot; kept ' + t.heldDays + (t.heldDays === 1 ? ' day' : ' days');
   } else if (t.dueDate) {
-    sub += ' &middot; due ' + escHtml(t.dueDate);
+    sub += ' &middot; due ' + escHtml(friendlyDateTime_(t.dueDate));
   }
 
   return `<div class="activity-row">
@@ -4746,7 +4777,7 @@ function renderCurrentlyActive_() {
 
 function renderActiveReservedRow_(b) {
   let sub = escHtml(b.reservedBy || 'Unknown customer');
-  if (b.reservedAt) sub += ' &middot; reserved ' + escHtml(b.reservedAt);
+  if (b.reservedAt) sub += ' &middot; reserved ' + escHtml(friendlyDateTime_(b.reservedAt));
 
   return `<div class="activity-row">
     <div class="activity-dot reserved"></div>
@@ -4767,8 +4798,8 @@ function renderActiveReservedRow_(b) {
 
 function renderActiveIssuedRow_(b) {
   let sub = escHtml(b.issuedTo || 'Unknown customer');
-  if (b.issuedAt) sub += ' &middot; issued ' + escHtml(b.issuedAt);
-  if (b.dueDate)  sub += ' &middot; due ' + escHtml(b.dueDate) + (b.overdue ? ' <span class="text-danger fw-bold">(overdue)</span>' : '');
+  if (b.issuedAt) sub += ' &middot; issued ' + escHtml(friendlyDateTime_(b.issuedAt));
+  if (b.dueDate)  sub += ' &middot; due ' + escHtml(friendlyDateTime_(b.dueDate)) + (b.overdue ? ' <span class="text-danger fw-bold">(overdue)</span>' : '');
 
   return `<div class="activity-row">
     <div class="activity-dot issued"></div>
